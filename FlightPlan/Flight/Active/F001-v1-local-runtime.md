@@ -53,15 +53,18 @@ Build a fully functional agent system running locally on a Mac Studio M3 Ultra. 
 │  ┌───────────────────────┴───────────────────────────┐     │
 │  │                 Local Storage                      │     │
 │  │  ~/AgentKit/                                       │     │
+│  │  ├── repos/        # Git repos (agent workspaces)  │     │
 │  │  ├── sessions/     # Session state (JSON)          │     │
-│  │  ├── artifacts/    # Generated outputs             │     │
 │  │  ├── models/       # MLX model cache               │     │
 │  │  └── config/       # Agent configs                 │     │
 │  └───────────────────────────────────────────────────┘     │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
           ▲
-          │ HTTP :8080 (A2A + Web UI)
+          │ HTTP :8080
+          │ ├── /a2a/*     (A2A protocol)
+          │ ├── /repos/*   (Git smart HTTP)
+          │ └── /ui/*      (Web UI)
           │
     ┌─────┴─────┐
     │  Clients  │
@@ -108,7 +111,16 @@ Build a fully functional agent system running locally on a Mac Studio M3 Ultra. 
 - [ ] `GET /.well-known/agent.json` (Agent Card)
 - [ ] Basic web UI for testing
 
-### Phase 5: Testing & Validation
+### Phase 5: Git Server
+- [ ] Git Smart HTTP endpoints:
+  - [ ] `GET /repos/:name/info/refs` (ref discovery)
+  - [ ] `POST /repos/:name/git-upload-pack` (fetch/clone)
+  - [ ] `POST /repos/:name/git-receive-pack` (push)
+- [ ] Repo lifecycle (create on session start)
+- [ ] Auto-commit on tool execution
+- [ ] Packet-line encoding/decoding
+
+### Phase 6: Testing & Validation
 - [ ] Unit tests for core types
 - [ ] Integration tests with real MLX inference
 - [ ] End-to-end test: submit task → get result
@@ -138,9 +150,12 @@ AgentKit/
 │   │   ├── LLM/
 │   │   │   ├── LLMProvider.swift
 │   │   │   └── MLXProvider.swift
-│   │   └── A2A/
-│   │       ├── A2ATypes.swift
-│   │       └── A2AServer.swift
+│   │   ├── A2A/
+│   │   │   ├── A2ATypes.swift
+│   │   │   └── A2AServer.swift
+│   │   └── Git/
+│   │       ├── GitServer.swift
+│   │       └── PacketLine.swift
 │   ├── AgentKitServer/        # HTTP server executable
 │   │   └── main.swift
 │   └── AgentKitCLI/           # CLI tool for testing
@@ -192,3 +207,5 @@ dependencies: [
 - [ ] Session state persists across restarts
 - [ ] Achieves >100 tok/s on 70B model
 - [ ] Clean shutdown with task state preservation
+- [ ] Can `git clone` agent workspace and see commit history
+- [ ] Agent changes auto-committed with descriptive messages
