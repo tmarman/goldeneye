@@ -1,0 +1,60 @@
+{
+  "name": "AgentKit",
+  "tagline": "Agent infrastructure for the Apple ecosystem",
+  "description": "An agent system for Apple devices supporting long-running tasks like deep research, trip planning, and general productivity. File-based architecture with iCloud storage enables versioning and seamless sync across devices.",
+  "industry": "Developer Tools / Consumer Tech",
+  "stage": "idea",
+  "flightPlanVersion": "1.0.0",
+
+  "targetUsers": {
+    "primary": ["Apple developers", "End consumers"],
+    "positioning": "Platform for developers to build agentic apps + consumer-facing agent capabilities"
+  },
+
+  "businessModel": {
+    "revenue": ["Subscriptions", "Agent completion fees"],
+    "exitStrategy": "Acquisition by Apple",
+    "valueProposition": "Monetize PCC infrastructure, establish Apple OS as 'LLM-first, Agent-first'"
+  },
+
+  "techStack": {
+    "primary": "Swift",
+    "platforms": ["iOS", "macOS", "Private Cloud Compute"],
+    "storage": "iCloud (file-based)",
+    "architecture": "Swift on both client and server"
+  },
+
+  "keyPrinciples": [
+    "Model-agnostic: Support both local and remote LLM services",
+    "Agent-agnostic: Seamless handoff with existing agents (Claude Code, Codex)",
+    "Protocol-first: ACP & A2A interoperability",
+    "File-based: Everything stored and versioned in iCloud",
+    "Developer-friendly: Layered building blocks on AppIntents + MCP"
+  ],
+
+  "researchFoundations": {
+    "ACE": {
+      "name": "Agentic Context Engineering",
+      "paper": "https://arxiv.org/abs/2510.04618",
+      "relevance": "Core context management paradigm"
+    }
+  },
+
+  "protocols": {
+    "ACP": {
+      "name": "Agent Communication Protocol",
+      "discussion": "https://github.com/orgs/i-am-bee/discussions/"
+    },
+    "A2A": {
+      "name": "Agent-to-Agent Protocol",
+      "spec": "https://github.com/a2aproject/A2A",
+      "blog": "https://developers.googleblog.com/en/a2a-a-new-era-of-agent-interoperability/"
+    }
+  },
+
+  "inspirations": [
+    "Claude Agent SDK",
+    "Microsoft Agent Framework",
+    "Gemini CLI orchestration"
+  ]
+}
