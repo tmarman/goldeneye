@@ -1,39 +1,54 @@
 # Current Project State
 
-**Last Updated**: 2024-12-31
-**Phase**: Ideation → Planning
+**Last Updated**: 2025-12-31
+**Phase**: Planning → Implementation
 
 ## Status Summary
 
-AgentKit is in early planning phase. FlightPlan structure has been initialized with:
-- Business context and positioning captured
-- Technical architecture outlined
-- Work broken into 6 Flights (F001-F006)
-- No code written yet
+Research complete. Ready to build V1 on Mac Studio M3 Ultra.
+
+Key research completed:
+- ACE context management patterns
+- A2A protocol specification (full schema)
+- Swift server ecosystem (Hummingbird)
+- MLX local inference (~230 tok/s on M2 Ultra)
 
 ## Active Work
 
 | Flight | Status | Description |
 |--------|--------|-------------|
-| F001 | Backlog | Core Agent Runtime |
-| F002 | Backlog | A2A Protocol |
-| F003 | Backlog | ACE Research Spike |
+| **F001** | **Active** | V1 Local Runtime (Mac Studio) |
+| F002 | Backlog | A2A Protocol (integrated into F001) |
+| F003 | Complete | ACE Research |
 | F004 | Backlog | Claude SDK Port |
 | F005 | Backlog | Developer SDK |
 | F006 | Backlog | Docs & Landing Page |
 
-## Recommended Next Steps
+## V1 Target
 
-1. **Start F003 (ACE Research)** — Grounds our context design in research
-2. **Start F001 (Core Runtime)** — Foundational, unblocks everything
-3. **Parallel: F002 (A2A)** — Can be researched while runtime is built
+**Hardware**: Mac Studio M3 Ultra (192GB)
+**LLM**: MLX with 70B model (Qwen/Llama)
+**Server**: Hummingbird HTTP with A2A endpoints
+**Storage**: Local files (`~/AgentKit/`)
 
-## Key Decisions Pending
+## Current Focus
 
-- [ ] Swift concurrency model (actors? structured concurrency?)
-- [ ] File format for agent state
-- [ ] A2A vs ACP protocol priority
-- [ ] Documentation site platform
+Building core runtime:
+1. Swift Package structure
+2. Agent protocol + loop
+3. MLX integration
+4. Basic tools (Read, Write, Bash)
+5. A2A HTTP endpoints
+
+## Key Decisions Made
+
+| Decision | Choice |
+|----------|--------|
+| LLM Framework | MLX (fastest, native Swift) |
+| HTTP Server | Hummingbird (minimal, SwiftNIO) |
+| Storage | Local files (simple for v1) |
+| Protocol | A2A (future interop) |
+| Context Pattern | ACE (incremental, not aggressive compaction) |
 
 ## Repository State
 
