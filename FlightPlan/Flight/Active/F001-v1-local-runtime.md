@@ -129,10 +129,23 @@ Build a fully functional agent system running locally on a Mac Studio M3 Ultra. 
 - [ ] Push notifications with action buttons (iOS/macOS)
 - [ ] `ApproveAgentActionIntent` for Siri/Shortcuts
 
-### Phase 7: Testing & Validation
+### Phase 7: Management Console (macOS)
+- [ ] SwiftUI app structure (`AgentKitConsole`)
+- [ ] Agent registry (local + remote via A2A)
+- [ ] Dashboard with task overview
+- [ ] Task detail view with full control (pause/resume/cancel/fork)
+- [ ] HITL approval interface
+- [ ] Session browser with git integration
+- [ ] Menu bar presence
+- [ ] Push notifications with action buttons
+- [ ] Bonjour discovery for local agents
+- [ ] AppIntents for Siri/Shortcuts
+
+### Phase 8: Testing & Validation
 - [ ] Unit tests for core types
 - [ ] Integration tests with real MLX inference
 - [ ] End-to-end test: submit task → get result
+- [ ] Console ↔ Server integration tests
 - [ ] Performance benchmarks
 
 ---
@@ -173,6 +186,12 @@ AgentKit/
 │   │   └── main.swift
 │   └── AgentKitCLI/           # CLI tool for testing
 │       └── main.swift
+├── AgentKitConsole/           # macOS management app
+│   ├── App/
+│   ├── Views/
+│   ├── Models/
+│   ├── Intents/
+│   └── System/
 └── Tests/
     └── AgentKitTests/
 ```
@@ -224,3 +243,5 @@ dependencies: [
 - [ ] Agent changes auto-committed with descriptive messages
 - [ ] Agent pauses for approval on high-risk actions
 - [ ] Can approve/deny via notification, web UI, or Siri
+- [ ] Management console can connect to local and remote agents
+- [ ] Full task control from console (pause/resume/cancel/fork)
