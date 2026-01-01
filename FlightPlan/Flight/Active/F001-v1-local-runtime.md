@@ -120,7 +120,16 @@ Build a fully functional agent system running locally on a Mac Studio M3 Ultra. 
 - [ ] Auto-commit on tool execution
 - [ ] Packet-line encoding/decoding
 
-### Phase 6: Testing & Validation
+### Phase 6: Human-in-the-Loop
+- [ ] `ApprovalRequest` types (action, plan, input, confirmation)
+- [ ] `ApprovalManager` actor with async continuations
+- [ ] A2A `INPUT_REQUIRED` state handling
+- [ ] HTTP endpoint for approval responses
+- [ ] Basic web UI for approvals
+- [ ] Push notifications with action buttons (iOS/macOS)
+- [ ] `ApproveAgentActionIntent` for Siri/Shortcuts
+
+### Phase 7: Testing & Validation
 - [ ] Unit tests for core types
 - [ ] Integration tests with real MLX inference
 - [ ] End-to-end test: submit task → get result
@@ -153,9 +162,13 @@ AgentKit/
 │   │   ├── A2A/
 │   │   │   ├── A2ATypes.swift
 │   │   │   └── A2AServer.swift
-│   │   └── Git/
-│   │       ├── GitServer.swift
-│   │       └── PacketLine.swift
+│   │   ├── Git/
+│   │   │   ├── GitServer.swift
+│   │   │   └── PacketLine.swift
+│   │   └── HITL/
+│   │       ├── ApprovalManager.swift
+│   │       ├── ApprovalTypes.swift
+│   │       └── ApprovalPolicy.swift
 │   ├── AgentKitServer/        # HTTP server executable
 │   │   └── main.swift
 │   └── AgentKitCLI/           # CLI tool for testing
@@ -209,3 +222,5 @@ dependencies: [
 - [ ] Clean shutdown with task state preservation
 - [ ] Can `git clone` agent workspace and see commit history
 - [ ] Agent changes auto-committed with descriptive messages
+- [ ] Agent pauses for approval on high-risk actions
+- [ ] Can approve/deny via notification, web UI, or Siri
