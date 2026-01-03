@@ -62,19 +62,20 @@ AgentKit is the core Swift library that powers Goldeneye. It provides the infras
 │  │                 │  │                 │  │                 │  │
 │  │ • Anthropic     │  │ • Task routing  │  │ • Server disco  │  │
 │  │ • OpenAI-compat │  │ • Agent handoff │  │ • Tool proxy    │  │
-│  │ • MLX (local)   │  │ • State sync    │  │ • Streaming     │  │
+│  │ • Exo (cluster) │  │ • State sync    │  │ • Streaming     │  │
+│  │ • MLX (local)   │  │                 │  │                 │  │
 │  │ • CLI wrappers  │  │                 │  │                 │  │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
 │                                                                  │
 └─────────────────────────────────────────────────────────────────┘
                                │
-┌─────────────────────────────────────────────────────────────────┐
-│                       Compute Layer                              │
-├──────────────────┬──────────────────┬───────────────────────────┤
-│   Local (MLX)    │   PCC (Apple)    │   Cloud (APIs)            │
-│   On-device      │   Private cloud  │   Anthropic/OpenAI        │
-│   inference      │   compute        │   with encryption         │
-└──────────────────┴──────────────────┴───────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                             Compute Layer                                    │
+├──────────────────┬──────────────────┬──────────────────┬────────────────────┤
+│   Local (MLX)    │   Exo Cluster    │   PCC (Apple)    │   Cloud (APIs)     │
+│   Single device  │   Multi-device   │   Private cloud  │   Anthropic/OpenAI │
+│   inference      │   distributed    │   compute        │   with encryption  │
+└──────────────────┴──────────────────┴──────────────────┴────────────────────┘
 ```
 
 ### Current Implementation Status
@@ -84,6 +85,7 @@ AgentKit is the core Swift library that powers Goldeneye. It provides the infras
 | **LLM Provider Protocol** | ✅ Complete | Unified interface for all model providers |
 | **Anthropic Provider** | ✅ Complete | Claude API with streaming, tools, vision |
 | **OpenAI-Compatible** | ✅ Complete | Works with Ollama, LM Studio, vLLM, etc. |
+| **Exo Cluster Provider** | ✅ Complete | Distributed inference across Apple Silicon devices |
 | **MLX Provider** | ✅ Complete | Native Apple Silicon inference |
 | **CLI Agent Providers** | ✅ Complete | Claude Code, Codex CLI, Gemini CLI wrappers |
 | **Tool System** | ✅ Complete | Read, Write, Bash, Glob, Grep, custom tools |
