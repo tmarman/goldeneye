@@ -23,6 +23,11 @@ let package = Package(
             name: "AgentKitCLI",
             targets: ["AgentKitCLI"]
         ),
+        // macOS Console app
+        .executable(
+            name: "AgentKitConsole",
+            targets: ["AgentKitConsole"]
+        ),
     ],
     dependencies: [
         // HTTP server
@@ -34,8 +39,11 @@ let package = Package(
         // Logging
         .package(url: "https://github.com/apple/swift-log.git", from: "1.5.0"),
 
-        // Note: MLX will be added once we start Phase 2
-        // .package(url: "https://github.com/ml-explore/mlx-swift.git", from: "0.21.0"),
+        // MLX for native Apple Silicon inference
+        .package(url: "https://github.com/ml-explore/mlx-swift.git", from: "0.21.0"),
+
+        // MLX LLM library for model loading and generation
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", from: "2.29.0"),
     ],
     targets: [
         // MARK: - Core Library
@@ -44,6 +52,11 @@ let package = Package(
             dependencies: [
                 .product(name: "Hummingbird", package: "hummingbird"),
                 .product(name: "Logging", package: "swift-log"),
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXRandom", package: "mlx-swift"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
             ],
             path: "Sources/AgentKit"
         ),
@@ -67,6 +80,15 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "Sources/AgentKitCLI"
+        ),
+
+        // MARK: - macOS Console App
+        .executableTarget(
+            name: "AgentKitConsole",
+            dependencies: [
+                "AgentKit",
+            ],
+            path: "Sources/AgentKitConsole"
         ),
 
         // MARK: - Tests

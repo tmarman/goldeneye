@@ -125,6 +125,19 @@ public actor AgentLoop: Agent {
                         assistantContent.append(.text(text))
                     }
 
+                case .textDelta(let delta):
+                    continuation.yield(.textDelta(TextDeltaEvent(
+                        taskId: task.id,
+                        delta: delta
+                    )))
+                    // Accumulate text
+                    if case .text(var existing) = assistantContent.last {
+                        existing += delta
+                        assistantContent[assistantContent.count - 1] = .text(existing)
+                    } else {
+                        assistantContent.append(.text(delta))
+                    }
+
                 case .toolCall(let call):
                     assistantContent.append(.toolUse(ToolUse(
                         id: call.id,
@@ -136,6 +149,16 @@ public actor AgentLoop: Agent {
                         toolName: call.name,
                         input: call.input
                     )))
+
+                case .usage(let usage):
+                    logger.debug("Token usage", metadata: [
+                        "input": "\(usage.inputTokens)",
+                        "output": "\(usage.outputTokens)"
+                    ])
+
+                case .error(let error):
+                    logger.error("LLM error: \(error)")
+                    throw AgentError.llmError(String(describing: error))
 
                 case .done:
                     break

@@ -90,11 +90,21 @@ public struct ToolSchema: Sendable, Codable {
 // MARK: - Tool Input/Output
 
 /// Input to a tool
-public struct ToolInput: Sendable {
+public struct ToolInput: Sendable, Codable {
     public let parameters: [String: AnyCodable]
 
     public init(parameters: [String: AnyCodable]) {
         self.parameters = parameters
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        self.parameters = try container.decode([String: AnyCodable].self)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(parameters)
     }
 
     /// Get a parameter value

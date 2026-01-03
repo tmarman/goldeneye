@@ -142,12 +142,20 @@ struct SendMessageParams: Codable, Sendable {
 }
 
 public struct MessageConfiguration: Codable, Sendable {
-    let blocking: Bool?
-    let historyLength: Int?
+    public let blocking: Bool?
+    public let historyLength: Int?
+    public let acceptedOutputModes: [String]?
+
+    public init(blocking: Bool? = nil, historyLength: Int? = nil, acceptedOutputModes: [String]? = nil) {
+        self.blocking = blocking
+        self.historyLength = historyLength
+        self.acceptedOutputModes = acceptedOutputModes
+    }
 
     enum CodingKeys: String, CodingKey {
         case blocking
         case historyLength = "history_length"
+        case acceptedOutputModes = "accepted_output_modes"
     }
 }
 
