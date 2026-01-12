@@ -1,0 +1,64 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agents}/AgentKit",
+            "name": "Debug AgentKitServer (AgentKit)",
+            "target": "AgentKitServer",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug AgentKitServer (AgentKit)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agents}/AgentKit",
+            "name": "Release AgentKitServer (AgentKit)",
+            "target": "AgentKitServer",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release AgentKitServer (AgentKit)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agents}/AgentKit",
+            "name": "Debug AgentKitCLI (AgentKit)",
+            "target": "AgentKitCLI",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug AgentKitCLI (AgentKit)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agents}/AgentKit",
+            "name": "Release AgentKitCLI (AgentKit)",
+            "target": "AgentKitCLI",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release AgentKitCLI (AgentKit)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agents}/AgentKit",
+            "name": "Debug AgentKitConsole (AgentKit)",
+            "target": "AgentKitConsole",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug AgentKitConsole (AgentKit)"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:agents}/AgentKit",
+            "name": "Release AgentKitConsole (AgentKit)",
+            "target": "AgentKitConsole",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release AgentKitConsole (AgentKit)"
+        }
+    ]
+}
