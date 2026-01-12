@@ -19,7 +19,7 @@ struct DocumentEditorView: View {
     var body: some View {
         mainContent
             .background(Color(.textBackgroundColor))
-            .overlay { dropTargetOverlay }
+            .overlay { dropTargetOverlay.animation(.liquidGlassQuick, value: isDropTargeted) }
             .overlay { blockMenuOverlay }
             .onDrop(of: [.fileURL, .plainText, .utf8PlainText], isTargeted: $isDropTargeted) { providers in
                 handleDrop(providers: providers)
@@ -61,29 +61,43 @@ struct DocumentEditorView: View {
                 isFocused: focusedBlockId == block.id,
                 onFocus: { focusedBlockId = block.id },
                 onAddBlock: { showBlockMenuAt(index: index + 1) },
-                onDelete: { deleteBlock(at: index) },
-                onMoveUp: index > 0 ? { moveBlock(from: index, to: index - 1) } : nil,
-                onMoveDown: index < document.blocks.count - 1 ? { moveBlock(from: index, to: index + 1) } : nil
+                onDelete: { withAnimation(.liquidGlass) { deleteBlock(at: index) } },
+                onMoveUp: index > 0 ? { withAnimation(.liquidGlass) { moveBlock(from: index, to: index - 1) } } : nil,
+                onMoveDown: index < document.blocks.count - 1 ? { withAnimation(.liquidGlass) { moveBlock(from: index, to: index + 1) } } : nil
             )
+            .transition(.asymmetric(
+                insertion: .opacity.combined(with: .scale(scale: 0.95)).combined(with: .offset(y: -8)),
+                removal: .opacity.combined(with: .scale(scale: 0.95))
+            ))
         }
     }
 
     @ViewBuilder
     private var dropTargetOverlay: some View {
         if isDropTargeted {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 3, dash: [8, 4]))
-                .background(Color.accentColor.opacity(0.05))
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2.5, dash: [10, 5]))
+                .background(
+                    RoundedRectangle(cornerRadius: 16)
+                        .fill(Color.accentColor.opacity(0.08))
+                )
                 .overlay {
-                    VStack(spacing: 12) {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.largeTitle)
+                    VStack(spacing: 16) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.accentColor.opacity(0.15))
+                                .frame(width: 72, height: 72)
+
+                            Image(systemName: "square.and.arrow.down")
+                                .font(.system(size: 32))
+                        }
                         Text("Drop to import")
                             .font(.headline)
                     }
                     .foregroundStyle(Color.accentColor)
                 }
-                .padding(8)
+                .padding(12)
+                .transition(.opacity.combined(with: .scale(scale: 0.98)))
         }
     }
 
@@ -196,7 +210,9 @@ struct DocumentEditorView: View {
 
     private func insertBlock(type: BlockType, at index: Int) {
         let newBlock = type.createBlock()
-        document.blocks.insert(newBlock, at: index)
+        withAnimation(.liquidGlass) {
+            document.blocks.insert(newBlock, at: index)
+        }
         focusedBlockId = newBlock.id
         document.updatedAt = Date()
     }
@@ -244,7 +260,7 @@ struct BlockRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: EditorTokens.Spacing.blockHorizontal) {
             // Block handle (visible on hover)
             BlockHandle(
                 isVisible: isHovered || isFocused,
@@ -258,7 +274,7 @@ struct BlockRow: View {
             BlockContentView(block: $block, documentId: documentId, isFocused: isFocused)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 2)
+        .editorBlock(isHovered: isHovered, isFocused: isFocused)
         .contentShape(Rectangle())
         .onTapGesture { onFocus() }
         .onHover { isHovered = $0 }
@@ -277,12 +293,7 @@ struct BlockHandle: View {
     var body: some View {
         HStack(spacing: 2) {
             // Add button
-            Button(action: onAdd) {
-                Image(systemName: "plus")
-                    .font(.caption)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+            HandleButton(icon: "plus", action: onAdd)
 
             // Drag handle with menu
             Menu {
@@ -300,13 +311,38 @@ struct BlockHandle: View {
             } label: {
                 Image(systemName: "line.3.horizontal")
                     .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 18, height: 18)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
         }
-        .frame(width: 40)
+        .frame(width: EditorTokens.Spacing.handleWidth)
         .opacity(isVisible ? 1 : 0)
-        .animation(.easeInOut(duration: 0.15), value: isVisible)
+        .animation(.liquidGlassQuick, value: isVisible)
+    }
+}
+
+/// A small handle button with hover feedback
+private struct HandleButton: View {
+    let icon: String
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(isHovered ? .primary : .secondary)
+                .frame(width: 18, height: 18)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(isHovered ? Color.primary.opacity(0.08) : Color.clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.liquidGlassQuick, value: isHovered)
     }
 }
 
@@ -829,34 +865,39 @@ struct BlockTypeMenu: View {
                 .onTapGesture { onDismiss() }
 
             // Menu
-            VStack(alignment: .leading, spacing: 0) {
-                Text("Add Block")
-                    .font(.caption.weight(.semibold))
+            GlassMenu {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus.circle")
+                            .font(.caption)
+                        Text("Add Block")
+                            .font(.caption.weight(.medium))
+                    }
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 10)
 
-                Divider()
+                    Divider()
+                        .opacity(0.5)
 
-                ForEach(BlockType.allCases, id: \.self) { type in
-                    Button(action: { onSelect(type) }) {
-                        HStack(spacing: 12) {
-                            Image(systemName: type.icon)
-                                .frame(width: 20)
-                            Text(type.displayName)
-                            Spacer()
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(BlockType.allCases, id: \.self) { type in
+                                GlassMenuItem(
+                                    title: type.displayName,
+                                    icon: type.icon,
+                                    iconColor: type == .agent ? EditorTokens.Colors.agentAccent : .secondary
+                                ) {
+                                    onSelect(type)
+                                }
+                            }
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .contentShape(Rectangle())
+                        .padding(.vertical, 4)
                     }
-                    .buttonStyle(.plain)
+                    .frame(maxHeight: 320)
                 }
+                .frame(width: 220)
             }
-            .frame(width: 200)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .shadow(color: .black.opacity(0.15), radius: 10, y: 5)
         }
     }
 }
@@ -877,62 +918,93 @@ struct SlashCommandMenu: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Turn into")
-                    .font(.caption.weight(.semibold))
+        GlassMenu {
+            VStack(alignment: .leading, spacing: 0) {
+                // Header
+                HStack {
+                    HStack(spacing: 6) {
+                        Image(systemName: "slash.circle")
+                            .font(.caption)
+                        Text("Turn into")
+                            .font(.caption.weight(.medium))
+                    }
                     .foregroundStyle(.secondary)
-                Spacer()
-                Text("↑↓ to navigate, ↵ to select")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-
-            Divider()
-
-            if filteredTypes.isEmpty {
-                Text("No matching blocks")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(12)
-            } else {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(filteredTypes.enumerated()), id: \.element) { index, type in
-                            Button(action: { onSelect(type) }) {
-                                HStack(spacing: 12) {
-                                    Image(systemName: type.icon)
-                                        .frame(width: 20)
-                                        .foregroundStyle(type == .agent ? .purple : .secondary)
-                                    Text(type.displayName)
-                                    Spacer()
-                                    Text(type.slashAliases.first ?? "")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(index == selectedIndex ? Color.accentColor.opacity(0.1) : Color.clear)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                        }
+                    Spacer()
+                    HStack(spacing: 4) {
+                        KeyboardHint(key: "↑↓")
+                        KeyboardHint(key: "↵")
                     }
                 }
-                .frame(maxHeight: 250)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+
+                Divider()
+                    .opacity(0.5)
+
+                if filteredTypes.isEmpty {
+                    emptyState
+                } else {
+                    menuItems
+                }
             }
+            .frame(width: 280)
         }
-        .frame(width: 280)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
         .onChange(of: filteredTypes.count) { _, newCount in
             if selectedIndex >= newCount {
                 selectedIndex = max(0, newCount - 1)
             }
         }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.title3)
+                .foregroundStyle(.quaternary)
+            Text("No matching blocks")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+
+    @ViewBuilder
+    private var menuItems: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(Array(filteredTypes.enumerated()), id: \.element) { index, type in
+                    GlassMenuItem(
+                        title: type.displayName,
+                        icon: type.icon,
+                        subtitle: "/" + (type.slashAliases.first ?? ""),
+                        iconColor: type == .agent ? EditorTokens.Colors.agentAccent : .secondary
+                    ) {
+                        onSelect(type)
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        .frame(maxHeight: 280)
+    }
+}
+
+/// A small keyboard hint badge
+private struct KeyboardHint: View {
+    let key: String
+
+    var body: some View {
+        Text(key)
+            .font(.system(size: 10, weight: .medium, design: .rounded))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.primary.opacity(0.06))
+            )
     }
 }
 
@@ -1097,31 +1169,52 @@ struct ImportContent {
 // MARK: - Import Drop Hint
 
 struct ImportDropHint: View {
+    @State private var isHovered = false
+
     var body: some View {
         VStack(spacing: 16) {
-            Image(systemName: "arrow.down.doc")
-                .font(.system(size: 40))
-                .foregroundStyle(.tertiary)
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(0.1))
+                    .frame(width: 64, height: 64)
 
-            VStack(spacing: 4) {
-                Text("Drop files here to import")
+                Image(systemName: "arrow.down.doc")
+                    .font(.system(size: 28))
+                    .foregroundStyle(Color.accentColor.opacity(0.6))
+            }
+
+            VStack(spacing: 6) {
+                Text("Drop files to import")
                     .font(.headline)
                     .foregroundStyle(.secondary)
 
-                Text("Supports Markdown, plain text, and more")
+                Text("Markdown, plain text, and more")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+
+            HStack(spacing: 8) {
+                ForEach(["doc.text", "doc.plaintext", "link"], id: \.self) { icon in
+                    Image(systemName: icon)
+                        .font(.caption)
+                        .foregroundStyle(.quaternary)
+                }
+            }
         }
         .frame(maxWidth: .infinity)
-        .padding(32)
-        .background(Color(.controlBackgroundColor).opacity(0.5))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(style: StrokeStyle(lineWidth: 1, dash: [6, 3]))
-                .foregroundStyle(.quaternary)
+        .padding(.vertical, 40)
+        .padding(.horizontal, 32)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(isHovered ? Color.accentColor.opacity(0.03) : Color(.controlBackgroundColor).opacity(0.3))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [8, 4]))
+                .foregroundStyle(isHovered ? Color.accentColor.opacity(0.3) : Color.primary.opacity(0.08))
+        )
+        .animation(.liquidGlassQuick, value: isHovered)
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -1140,55 +1233,20 @@ struct ImportPreviewSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             // Header
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Import Content")
-                        .font(.headline)
-
-                    Group {
-                        switch content.source {
-                        case .file(let name):
-                            Label(name, systemImage: "doc")
-                        case .clipboard:
-                            Label("From clipboard", systemImage: "doc.on.clipboard")
-                        case .url(let url):
-                            Label(url.host ?? url.absoluteString, systemImage: "link")
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Toggle(isOn: $useAgent) {
-                    Label("Curator Agent", systemImage: "sparkles")
-                        .font(.caption)
-                }
-                .toggleStyle(.switch)
-                .controlSize(.small)
-            }
-            .padding()
-            .background(Color(.controlBackgroundColor))
+            headerView
+                .padding()
+                .background(.ultraThinMaterial)
 
             Divider()
+                .opacity(0.5)
 
             // Preview
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     if isProcessing {
-                        HStack(spacing: 12) {
-                            ProgressView()
-                            Text("Processing with curator agent...")
-                                .foregroundStyle(.secondary)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding(40)
+                        processingView
                     } else if parsedBlocks.isEmpty {
-                        Text("Preview will appear here")
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity)
-                            .padding(40)
+                        emptyPreviewView
                     } else {
                         ForEach(parsedBlocks, id: \.id) { block in
                             ImportBlockPreview(block: block)
@@ -1198,35 +1256,137 @@ struct ImportPreviewSheet: View {
                 .padding()
             }
             .frame(minHeight: 300)
+            .background(Color(.textBackgroundColor))
 
             Divider()
+                .opacity(0.5)
 
             // Actions
-            HStack {
-                Button("Cancel", action: onCancel)
-                    .keyboardShortcut(.escape)
-
-                Spacer()
-
-                Text("\(parsedBlocks.count) blocks")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Button("Import") {
-                    onImport(parsedBlocks)
-                }
-                .keyboardShortcut(.return)
-                .buttonStyle(.borderedProminent)
-                .disabled(parsedBlocks.isEmpty || isProcessing)
-            }
-            .padding()
+            footerView
+                .padding()
+                .background(.ultraThinMaterial)
         }
-        .frame(width: 600, height: 500)
+        .frame(width: 600, height: 520)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
         .task {
             await processContent()
         }
         .onChange(of: useAgent) { _, _ in
             Task { await processContent() }
+        }
+    }
+
+    @ViewBuilder
+    private var headerView: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Import Content")
+                    .font(.headline)
+
+                sourceLabel
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            // Curator agent toggle with pill style
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.caption)
+                    .foregroundStyle(useAgent ? EditorTokens.Colors.agentAccent : .secondary)
+                Text("Curator")
+                    .font(.caption.weight(.medium))
+                Toggle("", isOn: $useAgent)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(useAgent ? EditorTokens.Colors.agentAccent.opacity(0.1) : Color.primary.opacity(0.05))
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var sourceLabel: some View {
+        switch content.source {
+        case .file(let name):
+            Label(name, systemImage: "doc.fill")
+        case .clipboard:
+            Label("From clipboard", systemImage: "doc.on.clipboard.fill")
+        case .url(let url):
+            Label(url.host ?? url.absoluteString, systemImage: "link")
+        }
+    }
+
+    @ViewBuilder
+    private var processingView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .scaleEffect(1.2)
+
+            VStack(spacing: 4) {
+                Text("Processing with Curator")
+                    .font(.subheadline.weight(.medium))
+                Text("Analyzing content structure...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+
+    @ViewBuilder
+    private var emptyPreviewView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "doc.text.magnifyingglass")
+                .font(.system(size: 32))
+                .foregroundStyle(.quaternary)
+            Text("Preview will appear here")
+                .font(.subheadline)
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
+    }
+
+    @ViewBuilder
+    private var footerView: some View {
+        HStack {
+            Button(action: onCancel) {
+                Text("Cancel")
+                    .frame(minWidth: 80)
+            }
+            .buttonStyle(GlassButtonStyle())
+            .keyboardShortcut(.escape)
+
+            Spacer()
+
+            HStack(spacing: 4) {
+                Image(systemName: "square.stack.3d.up")
+                    .font(.caption2)
+                Text("\(parsedBlocks.count) blocks")
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color.primary.opacity(0.05)))
+
+            Button(action: { onImport(parsedBlocks) }) {
+                HStack(spacing: 6) {
+                    Image(systemName: "square.and.arrow.down")
+                    Text("Import")
+                }
+                .frame(minWidth: 80)
+            }
+            .buttonStyle(GlassButtonStyle(isProminent: true))
+            .keyboardShortcut(.return)
+            .disabled(parsedBlocks.isEmpty || isProcessing)
         }
     }
 
@@ -1342,22 +1502,53 @@ struct ImportPreviewSheet: View {
 
 struct ImportBlockPreview: View {
     let block: Block
+    @State private var isHovered = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 10) {
             Image(systemName: block.iconName)
                 .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
+                .foregroundStyle(iconColor)
+                .frame(width: 20, height: 20)
+                .background(
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(iconColor.opacity(0.1))
+                )
 
-            Text(block.previewText)
-                .font(block.previewFont)
-                .lineLimit(2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(block.previewText)
+                    .font(block.previewFont)
+                    .lineLimit(2)
+                    .foregroundStyle(.primary)
+
+                Text(block.typeName)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer()
         }
-        .padding(8)
+        .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isHovered ? Color.primary.opacity(0.03) : Color(.controlBackgroundColor).opacity(0.5))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.06), lineWidth: 0.5)
+        )
+        .animation(.liquidGlassQuick, value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+
+    private var iconColor: Color {
+        switch block {
+        case .agent: return EditorTokens.Colors.agentAccent
+        case .code: return .orange
+        case .heading: return .blue
+        default: return .secondary
+        }
     }
 }
 
@@ -1412,6 +1603,22 @@ extension Block {
         case .callout: return "exclamationmark.circle"
         case .image: return "photo"
         case .agent: return "sparkles"
+        }
+    }
+
+    var typeName: String {
+        switch self {
+        case .text: return "Text"
+        case .heading(let h): return "Heading \(h.level == .h1 ? "1" : h.level == .h2 ? "2" : "3")"
+        case .bulletList: return "Bullet List"
+        case .numberedList: return "Numbered List"
+        case .todo: return "To-do"
+        case .code: return "Code"
+        case .quote: return "Quote"
+        case .divider: return "Divider"
+        case .callout: return "Callout"
+        case .image: return "Image"
+        case .agent: return "Agent Block"
         }
     }
 

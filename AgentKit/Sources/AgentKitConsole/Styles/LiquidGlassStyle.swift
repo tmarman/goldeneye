@@ -305,3 +305,162 @@ extension Animation {
         .spring(response: 0.5, dampingFraction: 0.8)
     }
 }
+
+// MARK: - Editor Design Tokens
+
+/// Design tokens specific to the document editor
+enum EditorTokens {
+    // MARK: Spacing
+    enum Spacing {
+        static let blockVertical: CGFloat = 2
+        static let blockHorizontal: CGFloat = 8
+        static let contentPadding: CGFloat = 24
+        static let handleWidth: CGFloat = 40
+        static let titleBottomPadding: CGFloat = 16
+    }
+
+    // MARK: Typography
+    enum Typography {
+        static let title: Font = .system(size: 32, weight: .bold)
+        static let heading1: Font = .system(size: 28, weight: .bold)
+        static let heading2: Font = .system(size: 22, weight: .semibold)
+        static let heading3: Font = .system(size: 18, weight: .semibold)
+        static let code: Font = .system(.body, design: .monospaced)
+    }
+
+    // MARK: Colors
+    enum Colors {
+        static let blockHoverBackground = Color.primary.opacity(0.03)
+        static let blockFocusBackground = Color.accentColor.opacity(0.05)
+        static let blockFocusBorder = Color.accentColor.opacity(0.2)
+        static let agentAccent = Color.purple
+        static let agentBackground = Color.purple.opacity(0.05)
+        static let agentBorder = Color.purple.opacity(0.3)
+        static let codeBackground = Color(.controlBackgroundColor)
+        static let menuBackground = Color(.windowBackgroundColor)
+    }
+
+    // MARK: Radii
+    enum Radii {
+        static let block: CGFloat = 8
+        static let menu: CGFloat = 12
+        static let code: CGFloat = 6
+        static let input: CGFloat = 6
+    }
+
+    // MARK: Shadows
+    enum Shadows {
+        static let menuRadius: CGFloat = 16
+        static let menuY: CGFloat = 6
+        static let menuOpacity: Double = 0.18
+    }
+}
+
+// MARK: - Editor Block Modifier
+
+/// Applies consistent hover/focus styling to editor blocks
+struct EditorBlockModifier: ViewModifier {
+    let isHovered: Bool
+    let isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.vertical, EditorTokens.Spacing.blockVertical)
+            .padding(.horizontal, 4)
+            .background(
+                RoundedRectangle(cornerRadius: EditorTokens.Radii.block)
+                    .fill(backgroundColor)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: EditorTokens.Radii.block)
+                    .stroke(isFocused ? EditorTokens.Colors.blockFocusBorder : Color.clear, lineWidth: 1)
+            )
+            .animation(.liquidGlassQuick, value: isHovered)
+            .animation(.liquidGlassQuick, value: isFocused)
+    }
+
+    private var backgroundColor: Color {
+        if isFocused {
+            return EditorTokens.Colors.blockFocusBackground
+        } else if isHovered {
+            return EditorTokens.Colors.blockHoverBackground
+        }
+        return .clear
+    }
+}
+
+extension View {
+    /// Apply editor block styling with hover/focus states
+    func editorBlock(isHovered: Bool, isFocused: Bool) -> some View {
+        modifier(EditorBlockModifier(isHovered: isHovered, isFocused: isFocused))
+    }
+}
+
+// MARK: - Glass Menu Style
+
+/// A polished glass menu for slash commands and block type menus
+struct GlassMenu<Content: View>: View {
+    let content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+
+    var body: some View {
+        content
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: EditorTokens.Radii.menu))
+            .overlay(
+                RoundedRectangle(cornerRadius: EditorTokens.Radii.menu)
+                    .stroke(.white.opacity(0.15), lineWidth: 0.5)
+            )
+            .shadow(
+                color: .black.opacity(EditorTokens.Shadows.menuOpacity),
+                radius: EditorTokens.Shadows.menuRadius,
+                y: EditorTokens.Shadows.menuY
+            )
+    }
+}
+
+// MARK: - Glass Menu Item
+
+/// A menu item with proper hover state for glass menus
+struct GlassMenuItem: View {
+    let title: String
+    let icon: String
+    var subtitle: String? = nil
+    var iconColor: Color = .secondary
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.body)
+                    .foregroundStyle(iconColor)
+                    .frame(width: 20)
+
+                Text(title)
+                    .foregroundStyle(.primary)
+
+                Spacer()
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? Color.accentColor.opacity(0.1) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
