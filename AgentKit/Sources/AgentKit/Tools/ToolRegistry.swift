@@ -66,11 +66,18 @@ extension ToolRegistry {
             await registry.register([
                 ReadTool(),
                 WriteTool(),
+                EditTool(),
                 BashTool(),
                 GlobTool(),
                 GrepTool(),
             ])
         }
         return registry
+    }
+
+    /// Add MCP tools from a manager
+    public func addMCPTools(from manager: MCPManager) async {
+        let mcpTools = await manager.getToolWrappers()
+        register(mcpTools)
     }
 }

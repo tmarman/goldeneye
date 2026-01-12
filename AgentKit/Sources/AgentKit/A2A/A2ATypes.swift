@@ -285,34 +285,90 @@ public struct TaskArtifactUpdateEvent: Sendable, Codable {
 
 // MARK: - JSON-RPC
 
+/// JSON-RPC ID supporting both string and integer values
+/// Per JSON-RPC 2.0 spec, id can be string, number, or null
+public struct JSONRPCId: Codable, Sendable, Hashable, CustomStringConvertible {
+    public let value: String
+
+    public init(_ value: String) {
+        self.value = value
+    }
+
+    public init(_ value: Int) {
+        self.value = String(value)
+    }
+
+    /// Generate a new unique ID
+    public static func generate() -> JSONRPCId {
+        JSONRPCId(UUID().uuidString)
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+
+        // Try string first, then int
+        if let stringValue = try? container.decode(String.self) {
+            self.value = stringValue
+        } else if let intValue = try? container.decode(Int.self) {
+            self.value = String(intValue)
+        } else {
+            throw DecodingError.typeMismatch(
+                JSONRPCId.self,
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Expected string or integer for JSON-RPC id"
+                )
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        // Always encode as string for consistency
+        try container.encode(value)
+    }
+
+    public var description: String { value }
+}
+
 public struct JSONRPCRequest<T: Codable & Sendable>: Codable, Sendable {
     public let jsonrpc: String
-    public let id: Int
+    public let id: JSONRPCId
     public let method: String
     public let params: T?
 
-    public init(id: Int, method: String, params: T? = nil) {
+    public init(id: JSONRPCId, method: String, params: T? = nil) {
         self.jsonrpc = "2.0"
         self.id = id
         self.method = method
         self.params = params
     }
+
+    /// Convenience init with string ID
+    public init(id: String, method: String, params: T? = nil) {
+        self.init(id: JSONRPCId(id), method: method, params: params)
+    }
+
+    /// Convenience init with auto-generated ID
+    public init(method: String, params: T? = nil) {
+        self.init(id: .generate(), method: method, params: params)
+    }
 }
 
 public struct JSONRPCResponse<T: Codable & Sendable>: Codable, Sendable {
     public let jsonrpc: String
-    public let id: Int
+    public let id: JSONRPCId
     public let result: T?
     public let error: JSONRPCError?
 
-    public init(id: Int, result: T) {
+    public init(id: JSONRPCId, result: T) {
         self.jsonrpc = "2.0"
         self.id = id
         self.result = result
         self.error = nil
     }
 
-    public init(id: Int, error: JSONRPCError) {
+    public init(id: JSONRPCId, error: JSONRPCError) {
         self.jsonrpc = "2.0"
         self.id = id
         self.result = nil

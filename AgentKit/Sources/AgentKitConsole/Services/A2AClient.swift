@@ -168,6 +168,49 @@ public actor A2AClient {
         return httpResponse.statusCode == 200
     }
 
+    // MARK: - Approvals
+
+    /// Fetch pending approval requests
+    public func fetchPendingApprovals() async throws -> [ClientApprovalRequest] {
+        let url = baseURL.appendingPathComponent("a2a/approvals")
+        let (data, response) = try await urlSession.data(from: url)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200
+        else {
+            throw A2AClientError.invalidResponse
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return try decoder.decode([ClientApprovalRequest].self, from: data)
+    }
+
+    /// Respond to an approval request
+    public func respondToApproval(id: String, approved: Bool, reason: String? = nil) async throws {
+        let url = baseURL.appendingPathComponent("a2a/approval/\(id)/respond")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let params = ClientApprovalResponse(
+            action: approved ? "approved" : "denied",
+            reason: reason
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        request.httpBody = try encoder.encode(params)
+
+        let (_, response) = try await urlSession.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              httpResponse.statusCode == 200
+        else {
+            throw A2AClientError.invalidResponse
+        }
+    }
+
     // MARK: - Private Helpers
 
     private func call<P: Encodable, R: Decodable>(method: String, params: P) async throws -> ClientJSONRPCResponse<R> {
@@ -265,6 +308,30 @@ private struct ClientListTasksParams: Encodable {
 
 private struct ClientCancelTaskParams: Encodable {
     let id: String
+}
+
+// MARK: - Approval Types
+
+public struct ClientApprovalRequest: Codable, Sendable, Identifiable {
+    public let id: String
+    public let taskId: String
+    public let action: String
+    public let description: String
+    public let riskLevel: String
+    public let canModify: Bool
+
+    public var risk: ClientRiskLevel {
+        ClientRiskLevel(rawValue: riskLevel) ?? .medium
+    }
+}
+
+public enum ClientRiskLevel: String, Codable, Sendable {
+    case low, medium, high, critical
+}
+
+private struct ClientApprovalResponse: Encodable {
+    let action: String
+    let reason: String?
 }
 
 // MARK: - Stream Events

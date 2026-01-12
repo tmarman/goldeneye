@@ -21,19 +21,27 @@ public actor AgentLoop: Agent {
 
     private let session: Session
     private let approvalManager: ApprovalManager
+    private let hookManager: ToolHookManager
     private let logger: Logger
 
     public init(
         id: AgentID = AgentID(),
         configuration: AgentConfiguration,
         session: Session,
-        approvalManager: ApprovalManager = ApprovalManager()
+        approvalManager: ApprovalManager = ApprovalManager(),
+        hookManager: ToolHookManager = ToolHookManager()
     ) {
         self.id = id
         self.configuration = configuration
         self.session = session
         self.approvalManager = approvalManager
+        self.hookManager = hookManager
         self.logger = Logger(label: "AgentKit.AgentLoop.\(id.rawValue)")
+    }
+
+    /// Add a tool execution hook
+    public func addHook(_ hook: any ToolExecutionHook) async {
+        await hookManager.add(hook)
     }
 
     // MARK: - Agent Protocol
@@ -280,9 +288,34 @@ public actor AgentLoop: Agent {
             }
         }
 
-        // Execute tool
+        // Execute tool with hooks
         let context = ToolContext(session: session, workingDirectory: session.workingDirectory)
-        return try await tool.execute(toolUse.input, context: context)
+
+        // Before hook
+        try await hookManager.runBeforeHooks(
+            tool: tool,
+            input: toolUse.input,
+            context: context
+        )
+
+        // Execute
+        let output = try await tool.execute(toolUse.input, context: context)
+
+        // After hook (fire-and-forget, don't fail task on hook errors)
+        Task {
+            do {
+                try await hookManager.runAfterHooks(
+                    tool: tool,
+                    input: toolUse.input,
+                    output: output,
+                    context: context
+                )
+            } catch {
+                logger.warning("Hook error: \(error.localizedDescription)")
+            }
+        }
+
+        return output
     }
 }
 

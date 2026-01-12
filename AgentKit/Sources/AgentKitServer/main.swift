@@ -24,6 +24,15 @@ struct AgentKitServer: AsyncParsableCommand {
     @Option(name: .long, help: "Log level (trace, debug, info, warning, error)")
     var logLevel: String = "info"
 
+    @Option(name: .long, help: "LLM provider (ollama, lmstudio, mock)")
+    var llmProvider: String = "ollama"
+
+    @Option(name: .long, help: "Ollama/LMStudio base URL")
+    var llmUrl: String = "http://localhost:11434"
+
+    @Option(name: .long, help: "Model name to use")
+    var model: String = "llama3.2"
+
     func run() async throws {
         // Configure logging
         LoggingSystem.bootstrap { label in
@@ -44,17 +53,76 @@ struct AgentKitServer: AsyncParsableCommand {
         // Create session store
         let sessionStore = SessionStore(baseDirectory: baseDir)
 
-        // Create task manager
-        let taskManager = TaskManager { message in
+        // Create LLM provider based on configuration
+        let provider: any LLMProvider = createLLMProvider(
+            type: llmProvider,
+            url: llmUrl,
+            model: model,
+            logger: logger
+        )
+
+        // Check LLM availability
+        if await provider.isAvailable() {
+            logger.info("LLM provider ready", metadata: [
+                "provider": "\(llmProvider)",
+                "model": "\(model)"
+            ])
+        } else {
+            logger.warning("LLM provider not available - agents will not be able to think!", metadata: [
+                "provider": "\(llmProvider)",
+                "url": "\(llmUrl)"
+            ])
+        }
+
+        // Load agents from iCloud/Agents/Team
+        let agentsManager = AgentsManager()
+        do {
+            try await agentsManager.loadAll()
+            let agentCount = await agentsManager.allAgentIds.count
+            let workspaceCount = await agentsManager.allWorkspaceIds.count
+            logger.info("Loaded from iCloud", metadata: [
+                "agents": "\(agentCount)",
+                "workspaces": "\(workspaceCount)",
+                "path": "\(agentsManager.basePath.path)"
+            ])
+        } catch {
+            logger.warning("Failed to load from iCloud: \(error)")
+        }
+
+        // Get or create default AgentKit agent definition
+        let agentDef: AgentDefinition
+        do {
+            agentDef = try await agentsManager.getOrCreateAgent("agentkit", config: AgentConfig(
+                name: "AgentKit",
+                description: "Local AI agent running on Apple Silicon"
+            ))
+            logger.info("Using agent definition", metadata: [
+                "id": "agentkit",
+                "path": "\(agentDef.path.path)"
+            ])
+        } catch {
+            logger.error("Failed to create agent definition: \(error)")
+            throw error
+        }
+
+        // Create shared approval manager for HITL
+        let approvalManager = ApprovalManager()
+        logger.info("Approval manager ready for human-in-the-loop")
+
+        // Create task manager with file-based config
+        let taskManager = TaskManager { [provider, agentDef, approvalManager] message in
             // Create a new agent for each task
             let session = try await sessionStore.create()
+
+            // Use system prompt from agent definition (file-based, editable)
             let config = AgentConfiguration(
-                name: "AgentKit",
-                systemPrompt: "You are a helpful AI assistant.",
-                tools: [ReadTool(), WriteTool(), BashTool(), GlobTool(), GrepTool()],
-                llmProvider: MockLLMProvider()  // TODO: Replace with MLX
+                name: agentDef.config.name ?? "AgentKit",
+                systemPrompt: agentDef.systemPrompt,
+                tools: [ReadTool(), WriteTool(), EditTool(), BashTool(), GlobTool(), GrepTool()],
+                llmProvider: provider,
+                maxIterations: agentDef.config.maxIterations ?? 10
             )
-            return AgentLoop(configuration: config, session: session)
+            return AgentLoop(configuration: config, session: session, approvalManager: approvalManager)
         }
 
         // Create agent card
@@ -84,8 +152,12 @@ struct AgentKitServer: AsyncParsableCommand {
         // Configure router
         let router = Router()
 
-        // A2A server
-        let a2aServer = A2AServer<BasicRequestContext>(agentCard: agentCard, taskManager: taskManager)
+        // A2A server with approval support
+        let a2aServer = A2AServer<BasicRequestContext>(
+            agentCard: agentCard,
+            taskManager: taskManager,
+            approvalManager: approvalManager
+        )
         a2aServer.configure(router: router)
 
         // Git server
@@ -142,6 +214,53 @@ struct AgentKitServer: AsyncParsableCommand {
         case "error": return .error
         case "critical": return .critical
         default: return .info
+        }
+    }
+
+    private func createLLMProvider(
+        type: String,
+        url: String,
+        model: String,
+        logger: Logger
+    ) -> any LLMProvider {
+        switch type.lowercased() {
+        case "ollama":
+            logger.info("Using Ollama provider", metadata: [
+                "url": "\(url)",
+                "model": "\(model)"
+            ])
+            return OllamaProvider(
+                baseURL: URL(string: url)!,
+                model: model
+            )
+
+        case "lmstudio":
+            // Parse host and port from URL, defaulting to localhost:1234
+            let parsedURL = URL(string: url) ?? URL(string: "http://localhost:1234")!
+            let host = parsedURL.host ?? "localhost"
+            let port = parsedURL.port ?? 1234
+
+            logger.info("Using LM Studio provider", metadata: [
+                "host": "\(host)",
+                "port": "\(port)",
+                "model": "\(model)"
+            ])
+            return LMStudioProvider(
+                host: host,
+                port: port,
+                defaultModel: model
+            )
+
+        case "mock":
+            logger.warning("Using mock provider - no real LLM!")
+            return MockLLMProvider()
+
+        default:
+            logger.warning("Unknown provider '\(type)', falling back to Ollama")
+            return OllamaProvider(
+                baseURL: URL(string: url)!,
+                model: model
+            )
         }
     }
 }

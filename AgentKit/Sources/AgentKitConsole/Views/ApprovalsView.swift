@@ -211,7 +211,7 @@ struct ApprovalDetailView: View {
                 VStack(spacing: 12) {
                     HStack(spacing: 16) {
                         Button {
-                            // Deny
+                            Task { await appState.denyRequest(approval) }
                         } label: {
                             Label("Deny", systemImage: "xmark")
                                 .frame(maxWidth: .infinity)
@@ -228,7 +228,7 @@ struct ApprovalDetailView: View {
                         .buttonStyle(.bordered)
 
                         Button {
-                            // Approve
+                            Task { await appState.approveRequest(approval) }
                         } label: {
                             Label("Approve", systemImage: "checkmark")
                                 .frame(maxWidth: .infinity)
@@ -241,7 +241,8 @@ struct ApprovalDetailView: View {
                     // Quick approve options
                     HStack {
                         Button("Approve + Remember") {
-                            // Approve and add to allow list
+                            // TODO: Approve and add to allow list
+                            Task { await appState.approveRequest(approval) }
                         }
                         .font(.caption)
 
@@ -249,6 +250,11 @@ struct ApprovalDetailView: View {
 
                         Button("Approve All Similar") {
                             // Approve all with same tool
+                            Task {
+                                for pending in appState.pendingApprovals where pending.toolName == approval.toolName {
+                                    await appState.approveRequest(pending)
+                                }
+                            }
                         }
                         .font(.caption)
                     }

@@ -10,12 +10,31 @@ struct ContentView: View {
         } detail: {
             DetailView()
         }
-        .frame(minWidth: 900, minHeight: 600)
+        .frame(minWidth: 1000, minHeight: 700)
+        // Agent panel overlay
+        .overlay(alignment: .bottomTrailing) {
+            AgentPanelButton()
+                .padding()
+        }
+        // Sheets
         .sheet(isPresented: $appState.showNewTaskSheet) {
             NewTaskSheet()
         }
         .sheet(isPresented: $appState.showConnectSheet) {
             ConnectAgentSheet()
+        }
+        .sheet(isPresented: $appState.showNewDocumentSheet) {
+            NewDocumentSheet()
+        }
+        .sheet(isPresented: $appState.showNewConversationSheet) {
+            NewConversationSheet()
+        }
+        .sheet(isPresented: $appState.showNewCoachingSheet) {
+            NewCoachingSheet()
+        }
+        // Agent panel slide-over
+        .sheet(isPresented: $appState.isAgentPanelVisible) {
+            AgentPanelView()
         }
     }
 }
@@ -27,35 +46,77 @@ struct SidebarView: View {
 
     var body: some View {
         List(selection: $appState.selectedSidebarItem) {
-            Section("Overview") {
-                ForEach([SidebarItem.dashboard]) { item in
-                    Label(item.label, systemImage: item.icon)
-                        .tag(item)
-                }
+            // Open Space - Primary entry point (no section header)
+            ForEach(SidebarItem.primaryItems) { item in
+                sidebarRow(for: item)
+                    .font(.headline)
             }
 
-            Section("Activity") {
-                ForEach([SidebarItem.tasks, SidebarItem.sessions]) { item in
+            Section("Spaces") {
+                ForEach(SidebarItem.workspaceItems) { item in
                     sidebarRow(for: item)
                 }
             }
 
-            Section("Control") {
-                sidebarRow(for: .approvals)
-                    .badge(appState.pendingApprovals.count)
+            Section("Activity") {
+                ForEach(SidebarItem.activityItems) { item in
+                    if item == .approvals {
+                        sidebarRow(for: item)
+                            .badge(appState.pendingApprovals.count)
+                    } else if item == .decisions {
+                        sidebarRow(for: item)
+                            .badge(3)  // TODO: wire up real count
+                    } else {
+                        sidebarRow(for: item)
+                    }
+                }
             }
 
             Section("Infrastructure") {
-                sidebarRow(for: .agents)
-                    .badge(appState.connectedAgents.count + (appState.localAgent != nil ? 1 : 0))
+                ForEach(SidebarItem.infrastructureItems) { item in
+                    if item == .agents {
+                        sidebarRow(for: item)
+                            .badge(appState.connectedAgents.count + (appState.localAgent != nil ? 1 : 0))
+                    } else {
+                        sidebarRow(for: item)
+                    }
+                }
+            }
+
+            // Starred section (if any)
+            if !appState.workspace.starredDocuments.isEmpty || !appState.workspace.starredConversations.isEmpty {
+                Section("Starred") {
+                    ForEach(appState.workspace.starredDocuments) { doc in
+                        Label(doc.title.isEmpty ? "Untitled" : doc.title, systemImage: "doc.text")
+                            .tag(SidebarItem.documents)
+                    }
+                    ForEach(appState.workspace.starredConversations) { conv in
+                        Label(conv.title, systemImage: "bubble.left")
+                            .tag(SidebarItem.conversations)
+                    }
+                }
             }
         }
         .listStyle(.sidebar)
-        .navigationTitle("AgentKit")
+        .navigationTitle("Goldeneye")
         .toolbar {
             ToolbarItem {
-                Button(action: { appState.showNewTaskSheet = true }) {
-                    Label("New Task", systemImage: "plus")
+                Menu {
+                    Button(action: { appState.showNewDocumentSheet = true }) {
+                        Label("New Document", systemImage: "doc.badge.plus")
+                    }
+                    Button(action: { appState.showNewConversationSheet = true }) {
+                        Label("New Conversation", systemImage: "bubble.left.and.bubble.right")
+                    }
+                    Button(action: { appState.showNewCoachingSheet = true }) {
+                        Label("New Coaching Session", systemImage: "figure.mind.and.body")
+                    }
+                    Divider()
+                    Button(action: { appState.showNewTaskSheet = true }) {
+                        Label("New Task", systemImage: "plus.circle")
+                    }
+                } label: {
+                    Label("New", systemImage: "plus")
                 }
             }
         }
@@ -74,16 +135,77 @@ struct DetailView: View {
 
     var body: some View {
         switch appState.selectedSidebarItem {
-        case .dashboard:
-            DashboardView()
+        case .openSpace:
+            OpenSpaceView()
+        case .spaces:
+            SpacesListView()
+        case .documents:
+            DocumentsView()
+        case .conversations:
+            ConversationsView()
         case .tasks:
             TasksView()
-        case .sessions:
-            SessionsView()
+        case .decisions:
+            DecisionCardsView()
         case .approvals:
             ApprovalsView()
         case .agents:
             AgentsView()
+        case .connections:
+            ConnectionsView()
+        }
+    }
+}
+
+// MARK: - Agent Panel Button
+
+struct AgentPanelButton: View {
+    @EnvironmentObject private var appState: AppState
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: { appState.isAgentPanelVisible.toggle() }) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .symbolEffect(.pulse, options: .repeating, isActive: appState.isAgentPanelVisible)
+                Text("Agent")
+            }
+            .font(.subheadline.weight(.medium))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background {
+                if appState.isAgentPanelVisible {
+                    Capsule()
+                        .fill(Color.accentColor.opacity(0.2))
+                } else {
+                    Capsule()
+                        .fill(.ultraThinMaterial)
+                }
+            }
+            .overlay(
+                Capsule()
+                    .stroke(
+                        appState.isAgentPanelVisible
+                            ? Color.accentColor.opacity(0.5)
+                            : Color.white.opacity(isHovered ? 0.25 : 0.15),
+                        lineWidth: 0.5
+                    )
+            )
+            .foregroundStyle(appState.isAgentPanelVisible ? Color.accentColor : Color.primary)
+            .scaleEffect(isHovered ? 1.03 : 1.0)
+            .shadow(
+                color: .black.opacity(isHovered ? 0.15 : 0.1),
+                radius: isHovered ? 10 : 6,
+                x: 0,
+                y: isHovered ? 4 : 2
+            )
+        }
+        .buttonStyle(.plain)
+        .keyboardShortcut("/", modifiers: .command)
+        .onHover { hovering in
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                isHovered = hovering
+            }
         }
     }
 }
