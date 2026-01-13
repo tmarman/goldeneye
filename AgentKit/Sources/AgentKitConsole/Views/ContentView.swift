@@ -36,6 +36,18 @@ struct ContentView: View {
         .sheet(isPresented: $appState.isAgentPanelVisible) {
             AgentPanelView()
         }
+        // Command Palette (⌘K triggered via menu command)
+        .sheet(isPresented: $appState.showCommandPalette) {
+            CommandPaletteView()
+        }
+        // Agent Recruitment
+        .sheet(isPresented: $appState.showAgentRecruitment) {
+            AgentRecruitmentView()
+        }
+        // Agent Builder (conversational custom agent creation)
+        .sheet(isPresented: $appState.showAgentBuilder) {
+            AgentBuilderView()
+        }
     }
 }
 

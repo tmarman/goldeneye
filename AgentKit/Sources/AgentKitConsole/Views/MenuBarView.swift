@@ -239,6 +239,7 @@ private struct TaskRow: View {
 
 private struct QuickActionsSection: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(spacing: 0) {
@@ -263,10 +264,27 @@ private struct QuickActionsSection: View {
             .padding(.vertical, 8)
             .disabled(appState.localAgent?.status.isConnected == true)
 
+            Button {
+                // Open main window
+                if let window = NSApp.windows.first(where: { $0.level == .normal && $0.canBecomeMain }) {
+                    window.makeKeyAndOrderFront(nil)
+                    NSApp.activate(ignoringOtherApps: true)
+                } else {
+                    // Create new window if none exists
+                    openWindow(id: "main")
+                }
+            } label: {
+                Label("Open Main Window", systemImage: "macwindow")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+
             Divider()
 
-            Button {
-                NSApplication.shared.terminate(nil)
+            Button(role: .destructive) {
+                NSApp.terminate(nil)
             } label: {
                 Label("Quit AgentKit", systemImage: "power")
                     .frame(maxWidth: .infinity, alignment: .leading)

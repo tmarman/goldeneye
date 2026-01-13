@@ -10,79 +10,33 @@ struct AgentPanelView: View {
     @State private var message = ""
     @State private var messages: [PanelMessage] = []
     @State private var isLoading = false
+    @State private var streamingContent = ""
+    @State private var errorMessage: String?
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack {
-                Image(systemName: "sparkles")
-                    .foregroundStyle(.purple)
-
-                Text(contextualAgentName)
-                    .font(.headline)
-
-                Spacer()
-
-                Button(action: { appState.isAgentPanelVisible = false }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding()
-            .background(Color(.controlBackgroundColor))
+            // Header with connection status
+            headerView
 
             Divider()
 
+            // Connection status banner (if not connected)
+            if !appState.isAgentConnected {
+                connectionBanner
+            }
+
             // Context indicator
             if let context = currentContext {
-                HStack(spacing: 8) {
-                    Image(systemName: context.icon)
-                    Text(context.description)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.accentColor.opacity(0.1))
+                contextIndicator(context)
+            }
+
+            // Error banner
+            if let error = errorMessage {
+                errorBanner(error)
             }
 
             // Messages
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        if messages.isEmpty {
-                            welcomeMessage
-                        }
-
-                        ForEach(messages) { message in
-                            PanelMessageView(message: message)
-                                .id(message.id)
-                        }
-
-                        if isLoading {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                    .scaleEffect(0.7)
-                                Text("Thinking...")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal)
-                        }
-                    }
-                    .padding()
-                }
-                .onChange(of: messages.count) { _, _ in
-                    if let lastId = messages.last?.id {
-                        withAnimation {
-                            proxy.scrollTo(lastId, anchor: .bottom)
-                        }
-                    }
-                }
-            }
+            messagesView
 
             Divider()
 
@@ -90,23 +44,228 @@ struct AgentPanelView: View {
             quickActions
 
             // Input
-            HStack(spacing: 8) {
-                TextField("Ask anything...", text: $message)
-                    .textFieldStyle(.plain)
-                    .onSubmit { sendMessage() }
-
-                Button(action: { sendMessage() }) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title3)
-                }
-                .disabled(message.isEmpty || isLoading)
-            }
-            .padding()
-            .background(Color(.controlBackgroundColor))
+            inputBar
         }
         .frame(width: 380, height: 600)
         .background(Color(.windowBackgroundColor))
     }
+
+    // MARK: - Header
+
+    private var headerView: some View {
+        HStack {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.purple)
+                    .symbolEffect(.pulse, options: .repeating, isActive: isLoading)
+
+                Text(contextualAgentName)
+                    .font(.headline)
+            }
+
+            Spacer()
+
+            // Connection indicator
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(appState.isAgentConnected ? Color.green : Color.orange)
+                    .frame(width: 6, height: 6)
+                Text(appState.isAgentConnected ? "Online" : "Offline")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Capsule().fill(Color.primary.opacity(0.05)))
+
+            Button(action: { appState.isAgentPanelVisible = false }) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding()
+        .background(Color(.controlBackgroundColor))
+    }
+
+    // MARK: - Connection Banner
+
+    private var connectionBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "wifi.slash")
+                .foregroundStyle(.orange)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Not connected to agent")
+                    .font(.caption.weight(.medium))
+                Text("Connect to enable AI features")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button("Connect") {
+                Task {
+                    await appState.connectToLocalAgent()
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.1))
+    }
+
+    // MARK: - Context Indicator
+
+    private func contextIndicator(_ context: ContextInfo) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: context.icon)
+            Text(context.description)
+            Spacer()
+            if context.hasContent {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .font(.caption)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.accentColor.opacity(0.08))
+    }
+
+    // MARK: - Error Banner
+
+    private func errorBanner(_ error: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+
+            Text(error)
+                .font(.caption)
+                .lineLimit(2)
+
+            Spacer()
+
+            Button(action: { errorMessage = nil }) {
+                Image(systemName: "xmark")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(10)
+        .background(Color.red.opacity(0.1))
+    }
+
+    // MARK: - Messages View
+
+    private var messagesView: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    if messages.isEmpty && !isLoading {
+                        welcomeMessage
+                    }
+
+                    ForEach(messages) { msg in
+                        PanelMessageView(message: msg)
+                            .id(msg.id)
+                    }
+
+                    // Streaming response display
+                    if isLoading && !streamingContent.isEmpty {
+                        StreamingPanelMessageView(content: streamingContent)
+                            .id("streaming")
+                    } else if isLoading {
+                        loadingIndicator
+                            .id("loading")
+                    }
+                }
+                .padding()
+            }
+            .onChange(of: messages.count) { _, _ in
+                scrollToBottom(proxy)
+            }
+            .onChange(of: streamingContent) { _, _ in
+                if !streamingContent.isEmpty {
+                    withAnimation(.easeOut(duration: 0.1)) {
+                        proxy.scrollTo("streaming", anchor: .bottom)
+                    }
+                }
+            }
+        }
+    }
+
+    private var loadingIndicator: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(.purple)
+                .frame(width: 24)
+
+            HStack(spacing: 6) {
+                ForEach(0..<3, id: \.self) { i in
+                    Circle()
+                        .fill(Color.purple.opacity(0.6))
+                        .frame(width: 6, height: 6)
+                        .scaleEffect(isLoading ? 1.0 : 0.5)
+                        .animation(
+                            .easeInOut(duration: 0.5)
+                                .repeatForever()
+                                .delay(Double(i) * 0.15),
+                            value: isLoading
+                        )
+                }
+                Text("Thinking...")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(10)
+            .background(Color(.controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func scrollToBottom(_ proxy: ScrollViewProxy) {
+        if let lastId = messages.last?.id {
+            withAnimation(.easeOut(duration: 0.2)) {
+                proxy.scrollTo(lastId, anchor: .bottom)
+            }
+        }
+    }
+
+    // MARK: - Input Bar
+
+    private var inputBar: some View {
+        HStack(spacing: 8) {
+            TextField("Ask anything...", text: $message, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .onSubmit { sendMessage() }
+
+            Button(action: { sendMessage() }) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(canSend ? Color.accentColor : Color.secondary)
+            }
+            .disabled(!canSend)
+            .keyboardShortcut(.return, modifiers: [])
+        }
+        .padding()
+        .background(Color(.controlBackgroundColor))
+    }
+
+    private var canSend: Bool {
+        !message.isEmpty && !isLoading && appState.isAgentConnected
+    }
+
+    // MARK: - Context & Agent Name
 
     private var contextualAgentName: String {
         switch appState.selectedSidebarItem {
@@ -130,46 +289,96 @@ struct AgentPanelView: View {
     private var currentContext: ContextInfo? {
         switch appState.selectedSidebarItem {
         case .openSpace:
-            return ContextInfo(icon: "square.and.pencil", description: "Open Space • Quick capture & timeline")
+            return ContextInfo(
+                icon: "square.and.pencil",
+                description: "Open Space • Quick capture & timeline",
+                hasContent: false
+            )
         case .spaces:
-            return ContextInfo(icon: "folder", description: "Browsing your Spaces")
+            return ContextInfo(
+                icon: "folder",
+                description: "Browsing your Spaces",
+                hasContent: false
+            )
         case .documents:
             if let docId = appState.selectedDocumentId,
                let doc = appState.workspace.documents.first(where: { $0.id == docId }) {
-                return ContextInfo(icon: "doc.text", description: "Working with: \(doc.title.isEmpty ? "Untitled" : doc.title)")
+                return ContextInfo(
+                    icon: "doc.text",
+                    description: "Working with: \(doc.title.isEmpty ? "Untitled" : doc.title)",
+                    hasContent: true,
+                    documentContent: doc.blocks.map { $0.previewText }.joined(separator: "\n")
+                )
             }
+            return ContextInfo(
+                icon: "doc.text",
+                description: "Documents",
+                hasContent: false
+            )
         case .conversations:
             if let convId = appState.selectedConversationId,
                let conv = appState.workspace.conversations.first(where: { $0.id == convId }) {
-                return ContextInfo(icon: "bubble.left", description: "In conversation: \(conv.title)")
+                return ContextInfo(
+                    icon: "bubble.left",
+                    description: "In conversation: \(conv.title)",
+                    hasContent: true
+                )
             }
+            return nil
         case .tasks:
-            return ContextInfo(icon: "checklist", description: "Managing tasks across Spaces")
+            return ContextInfo(
+                icon: "checklist",
+                description: "Managing tasks across Spaces",
+                hasContent: false
+            )
         case .decisions:
-            return ContextInfo(icon: "checkmark.seal", description: "Pending decisions to review")
+            let count = appState.pendingDecisionCount
+            return ContextInfo(
+                icon: "checkmark.seal",
+                description: count > 0 ? "\(count) pending decisions" : "No pending decisions",
+                hasContent: count > 0
+            )
         default:
-            break
+            return nil
         }
-        return nil
     }
+
+    // MARK: - Welcome Message
 
     private var welcomeMessage: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "sparkles")
-                .font(.system(size: 32))
-                .foregroundStyle(.purple.opacity(0.6))
+        VStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(Color.purple.opacity(0.1))
+                    .frame(width: 64, height: 64)
 
-            Text("How can I help?")
-                .font(.headline)
+                Image(systemName: "sparkles")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.purple.opacity(0.8))
+            }
 
-            Text("I'm aware of your current context and can help with:\n• Writing and editing\n• Research and analysis\n• Brainstorming ideas\n• Answering questions")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
+            VStack(spacing: 6) {
+                Text("How can I help?")
+                    .font(.headline)
+
+                Text("I'm aware of your current context and can help with:")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                CapabilityRow(icon: "pencil", text: "Writing and editing")
+                CapabilityRow(icon: "magnifyingglass", text: "Research and analysis")
+                CapabilityRow(icon: "lightbulb", text: "Brainstorming ideas")
+                CapabilityRow(icon: "questionmark.circle", text: "Answering questions")
+            }
+            .padding(.horizontal, 20)
         }
-        .padding()
+        .padding(.vertical, 20)
         .frame(maxWidth: .infinity)
     }
+
+    // MARK: - Quick Actions
 
     private var quickActions: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -184,6 +393,7 @@ struct AgentPanelView: View {
                             .clipShape(Capsule())
                     }
                     .buttonStyle(.plain)
+                    .disabled(!appState.isAgentConnected)
                 }
             }
             .padding(.horizontal)
@@ -215,26 +425,59 @@ struct AgentPanelView: View {
         sendMessage()
     }
 
+    // MARK: - Send Message (Real A2A Integration)
+
     private func sendMessage() {
-        guard !message.isEmpty else { return }
+        guard !message.isEmpty, appState.isAgentConnected else { return }
 
         let userMessage = PanelMessage(role: .user, content: message)
         messages.append(userMessage)
-        let sentMessage = message
+
+        // Build context-aware prompt
+        let contextualPrompt = buildContextualPrompt(message)
         message = ""
         isLoading = true
+        streamingContent = ""
+        errorMessage = nil
 
-        // Simulate response
         Task {
-            try? await Task.sleep(for: .milliseconds(800))
-
-            let response = PanelMessage(
-                role: .assistant,
-                content: "This is a placeholder response to: \"\(sentMessage)\"\n\nIn the full implementation, this would use the AgentKit framework to process your request with full context awareness."
-            )
-            messages.append(response)
-            isLoading = false
+            await sendToAgent(contextualPrompt)
         }
+    }
+
+    private func buildContextualPrompt(_ userInput: String) -> String {
+        var prompt = userInput
+
+        // Inject document context if available
+        if let context = currentContext, context.hasContent {
+            if let docContent = context.documentContent, !docContent.isEmpty {
+                let truncatedContent = String(docContent.prefix(2000))
+                prompt = """
+                Context: I'm currently working on a document with the following content:
+                ---
+                \(truncatedContent)
+                ---
+
+                User request: \(userInput)
+                """
+            }
+        }
+
+        return prompt
+    }
+
+    private func sendToAgent(_ prompt: String) async {
+        // Use streaming via AppState's A2A client
+        if let response = await appState.sendAgentMessage(prompt) {
+            // For now, display the full response (streaming will be added to AppState)
+            let assistantMessage = PanelMessage(role: .assistant, content: response)
+            messages.append(assistantMessage)
+        } else {
+            errorMessage = "Failed to get response from agent"
+        }
+
+        isLoading = false
+        streamingContent = ""
     }
 }
 
@@ -243,6 +486,8 @@ struct AgentPanelView: View {
 struct ContextInfo {
     let icon: String
     let description: String
+    var hasContent: Bool = false
+    var documentContent: String? = nil
 }
 
 struct PanelMessage: Identifiable {
@@ -251,6 +496,27 @@ struct PanelMessage: Identifiable {
     let content: String
     let timestamp = Date()
 }
+
+// MARK: - Capability Row
+
+private struct CapabilityRow: View {
+    let icon: String
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.caption)
+                .foregroundStyle(.purple)
+                .frame(width: 16)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+}
+
+// MARK: - Panel Message View
 
 struct PanelMessageView: View {
     let message: PanelMessage
@@ -266,6 +532,7 @@ struct PanelMessageView: View {
             VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 4) {
                 Text(message.content)
                     .font(.body)
+                    .textSelection(.enabled)
                     .padding(10)
                     .background(message.role == .user ? Color.accentColor : Color(.controlBackgroundColor))
                     .foregroundStyle(message.role == .user ? .white : .primary)
@@ -283,5 +550,39 @@ struct PanelMessageView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
+    }
+}
+
+// MARK: - Streaming Panel Message View
+
+struct StreamingPanelMessageView: View {
+    let content: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(.purple)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(content)
+                    .font(.body)
+                    .textSelection(.enabled)
+                    .padding(10)
+                    .background(Color(.controlBackgroundColor))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .overlay(alignment: .bottomTrailing) {
+                        // Typing indicator
+                        Circle()
+                            .fill(Color.purple)
+                            .frame(width: 6, height: 6)
+                            .opacity(0.6)
+                            .padding(6)
+                    }
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

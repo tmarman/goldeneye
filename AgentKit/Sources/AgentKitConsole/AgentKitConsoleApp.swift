@@ -1,62 +1,69 @@
 import AgentKit
+import AppKit
 import SwiftUI
+
+// MARK: - App Delegate that ACTUALLY works
+
+@MainActor
+class AppDelegate: NSObject, NSApplicationDelegate {
+    var window: NSWindow?
+
+    nonisolated func applicationDidFinishLaunching(_ notification: Notification) {
+        Task { @MainActor in
+            createAndShowWindow()
+        }
+    }
+
+    nonisolated func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            Task { @MainActor in
+                createAndShowWindow()
+            }
+        }
+        return true
+    }
+
+    func createAndShowWindow() {
+        if window == nil {
+            let contentView = ContentView()
+                .environmentObject(AppState.shared)
+
+            window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            window?.title = "Goldeneye"
+            window?.center()
+            window?.contentView = NSHostingView(rootView: contentView)
+            window?.setFrameAutosaveName("MainWindow")
+        }
+
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
+// MARK: - Main App (minimal - delegate handles window)
 
 @main
 struct AgentKitConsoleApp: App {
-    @StateObject private var appState = AppState()
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
+    private var appState: AppState { AppState.shared }
 
     var body: some Scene {
-        // Main window
-        WindowGroup {
-            ContentView()
-                .environmentObject(appState)
-        }
-        .commands {
-            CommandGroup(replacing: .newItem) {}
-            AgentCommands(appState: appState)
-        }
-
-        // Menu bar presence
+        // Menu bar only - window handled by AppDelegate
         MenuBarExtra("AgentKit", systemImage: appState.menuBarIcon) {
             MenuBarView()
                 .environmentObject(appState)
         }
         .menuBarExtraStyle(.window)
 
-        // Settings window
         Settings {
             SettingsView()
                 .environmentObject(appState)
-        }
-    }
-}
-
-// MARK: - Custom Commands
-
-struct AgentCommands: Commands {
-    @ObservedObject var appState: AppState
-
-    var body: some Commands {
-        CommandMenu("Agent") {
-            Button("New Task...") {
-                appState.showNewTaskSheet = true
-            }
-            .keyboardShortcut("n", modifiers: [.command])
-
-            Divider()
-
-            Button("Connect to Agent...") {
-                appState.showConnectSheet = true
-            }
-            .keyboardShortcut("k", modifiers: [.command, .shift])
-
-            Divider()
-
-            Button("Approve All Pending") {
-                Task { await appState.approveAllPending() }
-            }
-            .keyboardShortcut("a", modifiers: [.command, .shift])
-            .disabled(appState.pendingApprovals.isEmpty)
         }
     }
 }

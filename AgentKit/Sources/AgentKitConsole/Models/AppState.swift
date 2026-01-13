@@ -6,6 +6,8 @@ import SwiftUI
 /// Global application state for the Console app
 @MainActor
 public final class AppState: ObservableObject {
+    /// Shared instance for AppKit window creation
+    static let shared = AppState()
     // MARK: - Navigation
 
     @Published var selectedSidebarItem: SidebarItem = .openSpace
@@ -15,6 +17,9 @@ public final class AppState: ObservableObject {
     @Published var showNewConversationSheet = false
     @Published var showNewCoachingSheet = false
     @Published var showNewSpaceSheet = false
+    @Published var showCommandPalette = false
+    @Published var showAgentRecruitment = false
+    @Published var showAgentBuilder = false
 
     // MARK: - Space Management
 
@@ -74,6 +79,9 @@ public final class AppState: ObservableObject {
 
     @Published var connectedAgents: [ConnectedAgent] = []
     @Published var localAgent: ConnectedAgent?
+
+    /// Recruited agents from templates
+    @Published var recruitedAgents: [RecruitedAgent] = []
 
     // MARK: - Tasks
 
