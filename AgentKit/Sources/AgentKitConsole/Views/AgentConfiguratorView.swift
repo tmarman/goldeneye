@@ -275,15 +275,156 @@ struct AgentConfiguratorView: View {
         messages.append(ConfigMessage(role: .user, content: userMessage))
         isProcessing = true
 
-        // Simulate LLM processing with config updates
+        // Use real LLM for agent configuration
         Task {
-            try? await Task.sleep(for: .seconds(1.5))
+            await processWithLLM(userMessage)
+        }
+    }
 
-            // Parse user intent and update config (simplified simulation)
-            let response = processUserIntent(userMessage)
-            messages.append(ConfigMessage(role: .assistant, content: response))
+    private func processWithLLM(_ userMessage: String) async {
+        // Get the configurator model from settings
+        let configuratorModel = UserDefaults.standard.string(forKey: "configuratorModel") ?? "apple-intelligence"
+        let provider = await getConfiguratorProvider()
 
+        // Build conversation history for context
+        let conversationMessages = messages.map { msg -> Message in
+            switch msg.role {
+            case .user:
+                return Message(role: .user, content: .text(msg.content))
+            case .assistant:
+                return Message(role: .assistant, content: .text(msg.content))
+            }
+        }
+
+        // Add system prompt for agent configuration
+        let systemPrompt = """
+        You are an expert AI agent configurator. Your role is to help users create custom AI agents through conversation.
+
+        Based on the user's description, update the agent configuration by suggesting:
+        - A clear name for the agent
+        - A concise description of what it does
+        - Relevant skills/capabilities
+        - Required tools (calendar, reminders, web, filesystem, git, shell, memory)
+        - Personality traits (friendly, professional, casual, formal, etc.)
+
+        Always:
+        - Ask clarifying questions when requirements are unclear
+        - Provide helpful suggestions based on the user's needs
+        - Explain what each tool or capability enables
+        - Be conversational and encouraging
+
+        Current configuration state:
+        Name: \(config.name.isEmpty ? "(not set)" : config.name)
+        Description: \(config.description.isEmpty ? "(not set)" : config.description)
+        Skills: \(config.skills.isEmpty ? "(none)" : config.skills.joined(separator: ", "))
+        Tools: \(config.enabledTools.isEmpty ? "(none)" : config.enabledTools.joined(separator: ", "))
+        Personality: \(config.personality.isEmpty ? "(not set)" : config.personality)
+        """
+
+        let options = CompletionOptions(
+            model: configuratorModel == "apple-intelligence" ? nil : configuratorModel,
+            systemPrompt: systemPrompt,
+            stream: true
+        )
+
+        do {
+            let stream = try await provider.complete(conversationMessages, tools: [], options: options)
+            var fullResponse = ""
+
+            for try await event in stream {
+                switch event {
+                case .textDelta(let delta):
+                    fullResponse += delta
+                case .text(let text):
+                    fullResponse = text
+                case .done:
+                    // Parse response and extract config updates
+                    updateConfigFromResponse(fullResponse)
+                    messages.append(ConfigMessage(role: .assistant, content: fullResponse))
+                    isProcessing = false
+                case .error(let error):
+                    print("LLM Error: \(error)")
+                    messages.append(ConfigMessage(
+                        role: .assistant,
+                        content: "I encountered an error processing your request. Please try again."
+                    ))
+                    isProcessing = false
+                default:
+                    break
+                }
+            }
+        } catch {
+            print("Failed to get LLM response: \(error)")
+            messages.append(ConfigMessage(
+                role: .assistant,
+                content: "I'm having trouble connecting to the LLM. Please check your settings."
+            ))
             isProcessing = false
+        }
+    }
+
+    private func getConfiguratorProvider() async -> any LLMProvider {
+        let providerType = UserDefaults.standard.string(forKey: "llmProvider") ?? "apple-intelligence"
+
+        switch providerType {
+        case "apple-intelligence":
+            return FoundationModelsProvider()
+        case "ollama":
+            let urlString = UserDefaults.standard.string(forKey: "ollamaURL") ?? "http://localhost:11434"
+            let url = URL(string: urlString)!
+            let model = UserDefaults.standard.string(forKey: "configuratorModel") ?? "llama3.2"
+            return OllamaProvider(baseURL: url, model: model)
+        case "lmstudio":
+            let urlString = UserDefaults.standard.string(forKey: "lmStudioURL") ?? "http://localhost:1234"
+            let url = URL(string: urlString)!
+            let model = UserDefaults.standard.string(forKey: "configuratorModel") ?? "llama3.2"
+            // Parse host and port from URL
+            let host = url.host ?? "localhost"
+            let port = url.port ?? 1234
+            return LMStudioProvider(host: host, port: port, defaultModel: model)
+        default:
+            return MockLLMProvider()
+        }
+    }
+
+    private func updateConfigFromResponse(_ response: String) {
+        // Simple heuristic parsing to extract config updates from natural language
+        // In a production system, you might use structured output or function calling
+        let lowercased = response.lowercased()
+
+        // Extract name suggestions
+        if let nameMatch = response.range(of: #"(?:name|call|named)\s+(?:it\s+)?["""']([^"""']+)["""']"#, options: .regularExpression) {
+            let name = String(response[nameMatch]).replacingOccurrences(of: #"["""']"#, with: "", options: .regularExpression)
+            if !name.isEmpty {
+                config.name = name
+            }
+        }
+
+        // Detect tool mentions
+        let toolKeywords = [
+            ("calendar", "calendar"),
+            ("reminder", "reminders"),
+            ("task", "reminders"),
+            ("web", "web"),
+            ("search", "web"),
+            ("file", "filesystem"),
+            ("git", "git"),
+            ("shell", "shell"),
+            ("memory", "memory"),
+            ("rag", "memory")
+        ]
+
+        for (keyword, tool) in toolKeywords {
+            if lowercased.contains(keyword) && !config.enabledTools.contains(tool) {
+                config.enabledTools.append(tool)
+            }
+        }
+
+        // Detect personality
+        if lowercased.contains("friendly") || lowercased.contains("casual") {
+            config.personality = "Friendly, casual, and approachable"
+        } else if lowercased.contains("professional") || lowercased.contains("formal") {
+            config.personality = "Professional, concise, and formal"
         }
     }
 

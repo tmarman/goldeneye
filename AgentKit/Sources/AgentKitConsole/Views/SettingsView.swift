@@ -274,10 +274,11 @@ struct GeneralSettingsContent: View {
 struct LLMSettingsContent: View {
     @ObservedObject private var serverManager = ServerManager.shared
 
-    @AppStorage("llmProvider") private var llmProvider = "ollama"
+    @AppStorage("llmProvider") private var llmProvider = "apple-intelligence"
     @AppStorage("ollamaURL") private var ollamaURL = "http://localhost:11434"
     @AppStorage("lmStudioURL") private var lmStudioURL = "http://localhost:1234"
     @AppStorage("selectedModel") private var selectedModel = "llama3.2"
+    @AppStorage("configuratorModel") private var configuratorModel = "llama3.2"
 
     @State private var customModelName = ""
     @State private var isPullingModel = false
@@ -287,6 +288,7 @@ struct LLMSettingsContent: View {
         VStack(spacing: 16) {
             SettingsCard(title: "Provider", icon: "cube.box") {
                 Picker("Provider", selection: $llmProvider) {
+                    Text("Apple Intelligence").tag("apple-intelligence")
                     Text("Ollama").tag("ollama")
                     Text("LM Studio").tag("lmstudio")
                     Text("Mock (Testing)").tag("mock")
@@ -297,7 +299,9 @@ struct LLMSettingsContent: View {
                 }
             }
 
-            if llmProvider == "ollama" {
+            if llmProvider == "apple-intelligence" {
+                appleIntelligenceSettings
+            } else if llmProvider == "ollama" {
                 ollamaSettings
             } else if llmProvider == "lmstudio" {
                 lmStudioSettings
@@ -307,6 +311,89 @@ struct LLMSettingsContent: View {
         }
         .onAppear {
             Task { await serverManager.refreshOllamaModels() }
+        }
+    }
+
+    @ViewBuilder
+    private var appleIntelligenceSettings: some View {
+        SettingsCard(title: "Status", icon: "apple.logo") {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 6) {
+                    Image(systemName: "apple.logo")
+                        .foregroundStyle(.secondary)
+                    Text("Apple Intelligence")
+                        .fontWeight(.medium)
+                    Spacer()
+                    Circle()
+                        .fill(.green)
+                        .frame(width: 8, height: 8)
+                    Text("Available")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text("Uses on-device LLM for fast, private inference. Larger requests may use Private Cloud Compute with end-to-end encryption.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+
+        SettingsCard(title: "Model Configuration", icon: "cpu") {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Configurator Model")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    Picker("Configurator Model", selection: $configuratorModel) {
+                        Text("Default (Apple Intelligence)").tag("apple-intelligence")
+                        if llmProvider == "ollama" {
+                            ForEach(serverManager.availableModels) { model in
+                                Text(model.name).tag(model.name)
+                            }
+                        }
+                    }
+
+                    Text("Used for the agent configuration chat interface. More powerful models provide better configuration assistance.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Agent Runtime Model")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+
+                    Picker("Agent Model", selection: $selectedModel) {
+                        Text("Default (Apple Intelligence)").tag("apple-intelligence")
+                        if llmProvider == "ollama" {
+                            ForEach(serverManager.availableModels) { model in
+                                Text(model.name).tag(model.name)
+                            }
+                        }
+                    }
+
+                    Text("Used by your configured agents at runtime. Faster models improve response time.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+
+        SettingsCard(title: "Privacy", icon: "hand.raised") {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("On-device processing", systemImage: "lock.fill")
+                    .font(.subheadline)
+                    .foregroundStyle(.green)
+
+                Text("Your data never leaves your device unless using Private Cloud Compute, which uses end-to-end encryption and stateless computation.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 
