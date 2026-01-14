@@ -11,7 +11,8 @@ struct OpenSpaceView: View {
     @State private var selectedTab: OpenSpaceTab = .today
     @State private var itemFilter: TimelineFilter = .all
     @State private var currentMeeting: EKEvent?
-    @State private var captureMode: CaptureMode = .note
+    @State private var agentSuggestions: [AgentSuggestion] = []
+    @State private var isProcessingSuggestions = false
     @FocusState private var isInputFocused: Bool
 
     private let eventStore = EKEventStore()
@@ -23,17 +24,27 @@ struct OpenSpaceView: View {
         case notes = "Notes Only"
     }
 
-    enum CaptureMode: String, CaseIterable {
-        case note = "Note"
-        case brainstorm = "Brainstorm"
-        case transcribe = "Transcribe"
+    struct AgentSuggestion: Identifiable {
+        let id = UUID()
+        let icon: String
+        let action: String
+        let detail: String?
+        let color: Color
 
-        var icon: String {
-            switch self {
-            case .note: return "square.and.pencil"
-            case .brainstorm: return "lightbulb.max"
-            case .transcribe: return "waveform"
-            }
+        static func note() -> AgentSuggestion {
+            AgentSuggestion(icon: "note.text", action: "Save as note", detail: nil, color: .blue)
+        }
+
+        static func tasks(count: Int) -> AgentSuggestion {
+            AgentSuggestion(icon: "checklist", action: "Extract \(count) task\(count == 1 ? "" : "s")", detail: nil, color: .orange)
+        }
+
+        static func event(title: String) -> AgentSuggestion {
+            AgentSuggestion(icon: "calendar.badge.plus", action: "Create event", detail: title, color: .green)
+        }
+
+        static func connection(to: String) -> AgentSuggestion {
+            AgentSuggestion(icon: "link", action: "Relates to", detail: to, color: .purple)
         }
     }
 
@@ -130,122 +141,167 @@ struct OpenSpaceView: View {
         }
     }
 
-    // MARK: - Quick Capture Card (Post-it style)
+    // MARK: - Quick Capture Card (Whiteboard style)
 
     private var quickCaptureCard: some View {
-        VStack(spacing: 12) {
-            captureModeSelector
-            captureTextArea
+        VStack(spacing: 0) {
+            // Canvas area
+            VStack(spacing: 12) {
+                captureTextArea
+
+                // Agent suggestions (appear as user types)
+                if !agentSuggestions.isEmpty {
+                    agentSuggestionsView
+                }
+            }
+            .padding(16)
+
+            Divider()
+
+            // Action bar
             captureActionBar
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
         }
-        .padding(16)
         .background(captureCardBackground)
         .overlay(captureCardBorder)
         .padding()
         .animation(.spring(response: 0.25), value: isInputFocused)
-        .animation(.spring(response: 0.25), value: captureMode)
-    }
-
-    @ViewBuilder
-    private var captureModeSelector: some View {
-        HStack(spacing: 4) {
-            ForEach(CaptureMode.allCases, id: \.self) { mode in
-                CaptureModeButton(
-                    mode: mode,
-                    isSelected: captureMode == mode,
-                    action: { captureMode = mode }
-                )
-            }
-
-            Spacer()
-
-            if captureMode == .transcribe {
-                recordButton
+        .animation(.spring(response: 0.3), value: agentSuggestions.count)
+        .onChange(of: quickInput) { _, newValue in
+            Task {
+                await updateAgentSuggestions(for: newValue)
             }
         }
     }
 
     @ViewBuilder
-    private var recordButton: some View {
-        Button(action: startTranscription) {
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(Color.red)
-                    .frame(width: 8, height: 8)
-                Text("Record")
+    private var agentSuggestionsView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("Agent will:")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                if isProcessingSuggestions {
+                    ProgressView()
+                        .scaleEffect(0.6)
+                }
             }
-            .font(.caption.weight(.medium))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.red.opacity(0.1), in: Capsule())
-            .foregroundStyle(.red)
+
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(agentSuggestions) { suggestion in
+                    HStack(spacing: 8) {
+                        Image(systemName: suggestion.icon)
+                            .font(.caption)
+                            .foregroundStyle(suggestion.color)
+                            .frame(width: 16)
+
+                        Text(suggestion.action)
+                            .font(.caption)
+
+                        if let detail = suggestion.detail {
+                            Text("·")
+                                .foregroundStyle(.tertiary)
+                            Text(detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(suggestion.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                }
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(true)
-        .opacity(0.5)
-        .help("Voice transcription coming soon")
+        .padding(12)
+        .background(Color.secondary.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder
     private var captureTextArea: some View {
         ZStack(alignment: .topLeading) {
             if quickInput.isEmpty {
-                Text(capturePlaceholder)
-                    .font(.body)
-                    .foregroundStyle(.tertiary)
-                    .allowsHitTesting(false)
-                    .padding(.horizontal, 5)
-                    .padding(.top, 8)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Start writing, drawing, or brainstorming...")
+                        .font(.body)
+                        .foregroundStyle(.tertiary)
+
+                    Text("The agent will suggest what to do with your input")
+                        .font(.caption)
+                        .foregroundStyle(.quaternary)
+                }
+                .allowsHitTesting(false)
+                .padding(.horizontal, 5)
+                .padding(.top, 8)
             }
 
             TextEditor(text: $quickInput)
                 .font(.body)
                 .scrollContentBackground(.hidden)
                 .background(Color.clear)
-                .frame(minHeight: 100, maxHeight: 200)
+                .frame(minHeight: 120, maxHeight: 300)
                 .focused($isInputFocused)
         }
     }
 
     @ViewBuilder
     private var captureActionBar: some View {
-        HStack {
-            captureSuggestions
-            Spacer()
-            captureSubmitButton
-        }
-    }
-
-    @ViewBuilder
-    private var captureSuggestions: some View {
-        if !quickInput.isEmpty {
+        HStack(spacing: 12) {
+            // Future: Voice input, drawing tools
             HStack(spacing: 8) {
-                if quickInput.contains("@") || quickInput.contains("action") {
-                    SuggestionChip(icon: "checklist", text: "Create task")
+                Button(action: {}) {
+                    Image(systemName: "mic")
+                        .font(.title3)
                 }
-                if quickInput.contains("tomorrow") || quickInput.contains("next week") {
-                    SuggestionChip(icon: "calendar.badge.plus", text: "Add reminder")
-                }
-            }
-        }
-    }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(true)
+                .opacity(0.5)
+                .help("Voice input coming soon")
 
-    @ViewBuilder
-    private var captureSubmitButton: some View {
-        Button(action: submitCapture) {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.up.circle.fill")
-                Text("Capture")
+                Button(action: {}) {
+                    Image(systemName: "scribble")
+                        .font(.title3)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .disabled(true)
+                .opacity(0.5)
+                .help("Drawing coming soon on iPad")
             }
-            .font(.subheadline.weight(.medium))
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .background(quickInput.isEmpty ? Color.secondary.opacity(0.2) : Color.accentColor)
-            .foregroundColor(quickInput.isEmpty ? .secondary : .white)
-            .clipShape(Capsule())
+
+            Spacer()
+
+            // Submit button
+            Button(action: submitCapture) {
+                HStack(spacing: 6) {
+                    if agentSuggestions.isEmpty {
+                        Text("Submit")
+                    } else {
+                        Text("Submit")
+                        Text("·")
+                            .foregroundStyle(.white.opacity(0.5))
+                        Text("\(agentSuggestions.count) action\(agentSuggestions.count == 1 ? "" : "s")")
+                            .font(.caption)
+                    }
+                }
+                .font(.subheadline.weight(.medium))
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(quickInput.isEmpty ? Color.secondary.opacity(0.2) : Color.accentColor)
+                .foregroundColor(quickInput.isEmpty ? .secondary : .white)
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .disabled(quickInput.isEmpty)
         }
-        .buttonStyle(.plain)
-        .disabled(quickInput.isEmpty)
     }
 
     @ViewBuilder
@@ -261,19 +317,53 @@ struct OpenSpaceView: View {
             .stroke(isInputFocused ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
     }
 
-    private var capturePlaceholder: String {
-        switch captureMode {
-        case .note:
-            return "Jot down notes, ideas, or tasks..."
-        case .brainstorm:
-            return "Brain dump your thoughts here..."
-        case .transcribe:
-            return "Press Record to start transcribing..."
-        }
-    }
+    // MARK: - Agent Suggestions Logic
 
-    private func startTranscription() {
-        // TODO: Start SpeechAnalyzer transcription
+    private func updateAgentSuggestions(for text: String) async {
+        guard !text.isEmpty else {
+            agentSuggestions = []
+            return
+        }
+
+        // Debounce - wait a moment before processing
+        try? await Task.sleep(for: .milliseconds(500))
+
+        isProcessingSuggestions = true
+        defer { isProcessingSuggestions = false }
+
+        // Simple heuristic analysis (in production, call LLM orchestrator)
+        var suggestions: [AgentSuggestion] = []
+
+        // Always save as note
+        suggestions.append(.note())
+
+        // Detect tasks (lines starting with -, [], *, or containing words like "todo", "task")
+        let lines = text.components(separatedBy: .newlines)
+        let taskLines = lines.filter { line in
+            line.trimmingCharacters(in: .whitespaces).starts(with: "-") ||
+            line.trimmingCharacters(in: .whitespaces).starts(with: "*") ||
+            line.contains("[]") ||
+            line.contains("[ ]") ||
+            line.lowercased().contains("todo") ||
+            line.lowercased().contains("task")
+        }
+
+        if !taskLines.isEmpty {
+            suggestions.append(.tasks(count: taskLines.count))
+        }
+
+        // Detect calendar events (mentions of dates, times, meetings)
+        let eventKeywords = ["meeting", "call", "appointment", "tomorrow", "next week", "friday", "monday"]
+        if eventKeywords.contains(where: { text.lowercased().contains($0) }) {
+            suggestions.append(.event(title: "Suggested from context"))
+        }
+
+        // Detect potential connections (mentions of @ or project names)
+        if text.contains("@") || text.lowercased().contains("project") {
+            suggestions.append(.connection(to: "Related conversations"))
+        }
+
+        agentSuggestions = suggestions
     }
 
     // MARK: - Tab Selector
@@ -417,34 +507,6 @@ struct SuggestionChip: View {
             .padding(.vertical, 4)
             .background(Color.accentColor.opacity(0.1), in: Capsule())
             .foregroundStyle(Color.accentColor)
-        }
-        .buttonStyle(.plain)
-    }
-}
-
-// MARK: - Capture Mode Button
-
-struct CaptureModeButton: View {
-    let mode: OpenSpaceView.CaptureMode
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: mode.icon)
-                Text(mode.rawValue)
-            }
-            .font(.caption.weight(isSelected ? .semibold : .regular))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background {
-                if isSelected {
-                    Capsule()
-                        .fill(Color.accentColor.opacity(0.15))
-                }
-            }
-            .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
         }
         .buttonStyle(.plain)
     }
