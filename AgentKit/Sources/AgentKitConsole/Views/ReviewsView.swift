@@ -11,6 +11,7 @@ struct ReviewsView: View {
     @State private var filterStatus: ReviewStatus?
     @State private var searchText = ""
     @State private var isLoading = false
+    @State private var showNewReviewSheet = false
 
     var body: some View {
         NavigationSplitView {
@@ -74,9 +75,15 @@ struct ReviewsView: View {
         .navigationTitle("Reviews")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button(action: { /* TODO: Create review */ }) {
+                Button(action: { showNewReviewSheet = true }) {
                     Image(systemName: "plus")
                 }
+            }
+        }
+        .sheet(isPresented: $showNewReviewSheet) {
+            NewReviewSheet { reviewId in
+                selectedReviewId = reviewId
+                Task { await loadReviews() }
             }
         }
         .onChange(of: filterStatus) { _, _ in
@@ -125,9 +132,31 @@ struct ReviewsView: View {
         isLoading = true
         defer { isLoading = false }
 
-        // TODO: Load from ReviewManager
-        // For now, simulate empty state
-        reviews = []
+        await appState.loadReviews(status: filterStatus, searchText: searchText)
+
+        // Convert to index entries for the list
+        reviews = appState.reviews
+            .filter { review in
+                if let status = filterStatus, review.status != status {
+                    return false
+                }
+                if !searchText.isEmpty {
+                    return review.title.localizedCaseInsensitiveContains(searchText) ||
+                           review.author.name.localizedCaseInsensitiveContains(searchText)
+                }
+                return true
+            }
+            .map { review in
+                ReviewIndexEntry(
+                    id: review.id,
+                    title: review.title,
+                    author: review.author.name,
+                    status: review.status,
+                    spaceId: review.spaceId,
+                    createdAt: review.createdAt,
+                    updatedAt: review.updatedAt
+                )
+            }
     }
 }
 
@@ -186,6 +215,7 @@ struct ReviewDetailView: View {
     @State private var comments: [CommentThread] = []
     @State private var isLoading = true
     @State private var selectedTab: ReviewTab = .changes
+    @State private var showRequestChangesSheet = false
 
     enum ReviewTab: String, CaseIterable {
         case changes = "Changes"
@@ -244,6 +274,11 @@ struct ReviewDetailView: View {
         .background(Color(.textBackgroundColor))
         .toolbar {
             reviewToolbar(review)
+        }
+        .sheet(isPresented: $showRequestChangesSheet) {
+            ReviewRequestChangesSheet(reviewId: reviewId) {
+                Task { await loadReview() }
+            }
         }
     }
 
@@ -326,22 +361,31 @@ struct ReviewDetailView: View {
         ToolbarItemGroup(placement: .primaryAction) {
             if review.status == .draft {
                 Button("Open for Review") {
-                    // TODO: Open review
+                    Task {
+                        await appState.openReview(reviewId)
+                        await loadReview()
+                    }
                 }
                 .buttonStyle(GlassButtonStyle(isProminent: true))
             } else if review.status == .open {
                 Button("Approve") {
-                    // TODO: Approve
+                    Task {
+                        await appState.approveReview(reviewId)
+                        await loadReview()
+                    }
                 }
                 .buttonStyle(GlassButtonStyle(isProminent: true))
 
                 Button("Request Changes") {
-                    // TODO: Request changes
+                    showRequestChangesSheet = true
                 }
                 .buttonStyle(GlassButtonStyle())
             } else if review.status == .approved {
                 Button("Merge") {
-                    // TODO: Merge
+                    Task {
+                        await appState.mergeReview(reviewId)
+                        await loadReview()
+                    }
                 }
                 .buttonStyle(GlassButtonStyle(isProminent: true))
             }
@@ -350,11 +394,9 @@ struct ReviewDetailView: View {
 
     private func loadReview() async {
         isLoading = true
-        do {
-            // TODO: Load from ReviewManager
-            // review = try await reviewManager.getReview(reviewId)
-            // comments = try await reviewManager.getCommentThreads(for: reviewId)
-        }
+        review = appState.getReview(reviewId)
+        // Comments would be loaded from storage in full implementation
+        comments = []
         isLoading = false
     }
 }
@@ -764,6 +806,276 @@ extension ApprovalStatus {
         case .approved: return .green
         case .changesRequested: return .orange
         case .commented: return .blue
+        }
+    }
+}
+
+// MARK: - New Review Sheet
+
+struct NewReviewSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
+
+    let onCreate: (ReviewID) -> Void
+
+    @State private var title = ""
+    @State private var description = ""
+    @State private var sourceBranch = ""
+    @State private var targetBranch = "main"
+    @State private var isCreating = false
+    @State private var errorMessage: String?
+
+    // Available branches (would be populated from git)
+    @State private var availableBranches: [String] = ["main", "develop", "feature/new-ui", "feature/agents"]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("New Review")
+                    .font(.headline)
+                Spacer()
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding()
+
+            Divider()
+
+            // Form content
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Title
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Title")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        TextField("Review title", text: $title)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    // Description
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Description")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        TextEditor(text: $description)
+                            .font(.body)
+                            .frame(height: 80)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                            )
+                    }
+
+                    // Branch selection
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Branches")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 12) {
+                            // Source branch
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Source")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                Picker("Source", selection: $sourceBranch) {
+                                    Text("Select branch").tag("")
+                                    ForEach(availableBranches.filter { $0 != targetBranch }, id: \.self) { branch in
+                                        Text(branch).tag(branch)
+                                    }
+                                }
+                                .labelsHidden()
+                            }
+
+                            Image(systemName: "arrow.right")
+                                .foregroundStyle(.tertiary)
+
+                            // Target branch
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Target")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                                Picker("Target", selection: $targetBranch) {
+                                    ForEach(availableBranches.filter { $0 != sourceBranch }, id: \.self) { branch in
+                                        Text(branch).tag(branch)
+                                    }
+                                }
+                                .labelsHidden()
+                            }
+                        }
+                    }
+
+                    // Error display
+                    if let error = errorMessage {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Text(error)
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                        .padding(8)
+                        .background(.orange.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+                .padding()
+            }
+
+            Divider()
+
+            // Actions
+            HStack {
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.escape)
+
+                Spacer()
+
+                Button(action: createReview) {
+                    if isCreating {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Text("Create Review")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!isValid || isCreating)
+                .keyboardShortcut(.return)
+            }
+            .padding()
+        }
+        .frame(width: 450, height: 420)
+        .task {
+            await loadBranches()
+        }
+    }
+
+    private var isValid: Bool {
+        !title.isEmpty && !sourceBranch.isEmpty && sourceBranch != targetBranch
+    }
+
+    private func loadBranches() async {
+        // TODO: Load actual branches from git
+        // For now, use the sample branches
+    }
+
+    private func createReview() {
+        guard isValid else { return }
+        isCreating = true
+        errorMessage = nil
+
+        // Create review with placeholder commits for now
+        // In a full implementation, this would use git to get actual commits
+        let review = Review(
+            title: title,
+            description: description,
+            author: Author(name: "You"),
+            baseCommit: "HEAD~1",  // Placeholder
+            headCommit: "HEAD",    // Placeholder
+            targetBranch: targetBranch,
+            sourceBranch: sourceBranch,
+            status: .draft
+        )
+
+        // TODO: Save via ReviewManager when wired up to AppState
+        // For now, just return the ID
+        onCreate(review.id)
+        dismiss()
+    }
+}
+
+// MARK: - Request Changes Sheet
+
+struct ReviewRequestChangesSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
+
+    let reviewId: ReviewID
+    let onComplete: () -> Void
+
+    @State private var comment = ""
+    @State private var isSubmitting = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Request Changes")
+                    .font(.headline)
+                Spacer()
+                Button(action: { dismiss() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding()
+
+            Divider()
+
+            // Comment input
+            VStack(alignment: .leading, spacing: 8) {
+                Text("What changes are needed?")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                TextEditor(text: $comment)
+                    .font(.body)
+                    .frame(height: 120)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+                    )
+            }
+            .padding()
+
+            Divider()
+
+            // Actions
+            HStack {
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.escape)
+
+                Spacer()
+
+                Button(action: submitRequest) {
+                    if isSubmitting {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                    } else {
+                        Text("Request Changes")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+                .disabled(comment.isEmpty || isSubmitting)
+                .keyboardShortcut(.return)
+            }
+            .padding()
+        }
+        .frame(width: 400, height: 300)
+    }
+
+    private func submitRequest() {
+        guard !comment.isEmpty else { return }
+        isSubmitting = true
+
+        Task {
+            await appState.requestChangesOnReview(reviewId, comment: comment)
+            await MainActor.run {
+                onComplete()
+                dismiss()
+            }
         }
     }
 }

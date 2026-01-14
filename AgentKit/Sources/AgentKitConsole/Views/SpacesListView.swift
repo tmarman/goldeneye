@@ -1,4 +1,5 @@
 import AgentKit
+import AppKit
 import SwiftUI
 
 // MARK: - Spaces List View
@@ -62,13 +63,20 @@ struct SpacesListView: View {
 
 struct SpaceCard: View {
     let space: SpaceViewModel
+    @EnvironmentObject private var appState: AppState
     @State private var isHovered = false
+    @State private var isStarred: Bool = false
+
+    init(space: SpaceViewModel) {
+        self.space = space
+        self._isStarred = State(initialValue: space.isStarred)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
             HStack {
-                // Icon
+                // Icon with subtle animation
                 RoundedRectangle(cornerRadius: 8)
                     .fill(space.color.gradient)
                     .frame(width: 40, height: 40)
@@ -77,6 +85,7 @@ struct SpaceCard: View {
                             .font(.title3)
                             .foregroundStyle(.white)
                     }
+                    .shadow(color: space.color.opacity(isHovered ? 0.4 : 0.2), radius: isHovered ? 6 : 3)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(space.name)
@@ -89,10 +98,15 @@ struct SpaceCard: View {
 
                 Spacer()
 
-                // Star button
-                Button(action: {}) {
-                    Image(systemName: space.isStarred ? "star.fill" : "star")
-                        .foregroundStyle(space.isStarred ? .yellow : .secondary)
+                // Star button with animation
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.5)) {
+                        isStarred.toggle()
+                    }
+                }) {
+                    Image(systemName: isStarred ? "star.fill" : "star")
+                        .foregroundStyle(isStarred ? .yellow : .secondary)
+                        .scaleEffect(isStarred ? 1.1 : 1.0)
                 }
                 .buttonStyle(.plain)
             }
@@ -107,7 +121,7 @@ struct SpaceCard: View {
 
             Divider()
 
-            // Stats
+            // Stats with hover highlight
             HStack(spacing: 16) {
                 Label("\(space.documentCount)", systemImage: "doc.text")
                 Label("\(space.contributorCount)", systemImage: "person.2")
@@ -126,16 +140,78 @@ struct SpaceCard: View {
         }
         .overlay(
             RoundedRectangle(cornerRadius: 12)
-                .stroke(isHovered ? Color.accentColor.opacity(0.3) : Color.white.opacity(0.1), lineWidth: 1)
+                .stroke(
+                    LinearGradient(
+                        colors: isHovered
+                            ? [space.color.opacity(0.5), space.color.opacity(0.2)]
+                            : [Color.white.opacity(0.15), Color.white.opacity(0.05)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: 1
+                )
         )
-        .shadow(color: .black.opacity(isHovered ? 0.15 : 0.08), radius: isHovered ? 12 : 6, y: isHovered ? 4 : 2)
+        .shadow(color: .black.opacity(isHovered ? 0.18 : 0.08), radius: isHovered ? 16 : 6, y: isHovered ? 6 : 2)
         .scaleEffect(isHovered ? 1.02 : 1.0)
-        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
         .onHover { hovering in
             isHovered = hovering
         }
         .onTapGesture {
             // Navigate to space detail
+            appState.selectedSpaceId = SpaceID(space.id)
+        }
+        .contextMenu {
+            Button(action: {
+                appState.selectedSpaceId = SpaceID(space.id)
+            }) {
+                Label("Open Space", systemImage: "arrow.right.circle")
+            }
+
+            if let path = space.path {
+                Button(action: {
+                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path.path)
+                }) {
+                    Label("Show in Finder", systemImage: "folder")
+                }
+            }
+
+            Divider()
+
+            Button(action: {
+                withAnimation {
+                    isStarred.toggle()
+                }
+            }) {
+                Label(isStarred ? "Unstar" : "Star", systemImage: isStarred ? "star.slash" : "star")
+            }
+
+            Divider()
+
+            if let path = space.path {
+                Button(action: {
+                    NSWorkspace.shared.open(URL(string: "vscode://file/\(path.path)")!)
+                }) {
+                    Label("Open in VS Code", systemImage: "chevron.left.forwardslash.chevron.right")
+                }
+
+                Button(action: {
+                    NSWorkspace.shared.openApplication(
+                        at: URL(fileURLWithPath: "/Applications/Xcode.app"),
+                        configuration: NSWorkspace.OpenConfiguration()
+                    )
+                }) {
+                    Label("Open in Xcode", systemImage: "hammer")
+                }
+            }
+
+            Divider()
+
+            Button(role: .destructive, action: {
+                // Archive space
+            }) {
+                Label("Archive Space", systemImage: "archivebox")
+            }
         }
     }
 }

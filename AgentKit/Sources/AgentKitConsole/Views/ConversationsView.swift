@@ -122,6 +122,9 @@ struct ConversationDetailView: View {
     @State private var isLoading = false
     @State private var streamingResponse = ""  // For real-time display of agent response
     @State private var errorMessage: String?
+    @State private var showRenameAlert = false
+    @State private var newTitle = ""
+    @State private var showDeleteConfirmation = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -152,17 +155,26 @@ struct ConversationDetailView: View {
                 Spacer()
 
                 Menu {
-                    Button(action: {}) {
+                    Button(action: {
+                        newTitle = conversation.title
+                        showRenameAlert = true
+                    }) {
                         Label("Rename", systemImage: "pencil")
                     }
-                    Button(action: {}) {
+                    Button(action: {
+                        togglePin()
+                    }) {
                         Label(conversation.isPinned ? "Unpin" : "Pin", systemImage: conversation.isPinned ? "pin.slash" : "pin")
                     }
-                    Button(action: {}) {
+                    Button(action: {
+                        toggleStar()
+                    }) {
                         Label(conversation.isStarred ? "Remove Star" : "Add Star", systemImage: conversation.isStarred ? "star.slash" : "star")
                     }
                     Divider()
-                    Button(role: .destructive, action: {}) {
+                    Button(role: .destructive, action: {
+                        showDeleteConfirmation = true
+                    }) {
                         Label("Delete", systemImage: "trash")
                     }
                 } label: {
@@ -254,6 +266,47 @@ struct ConversationDetailView: View {
             .padding()
             .background(Color(.controlBackgroundColor))
         }
+        .alert("Rename Conversation", isPresented: $showRenameAlert) {
+            TextField("Title", text: $newTitle)
+            Button("Cancel", role: .cancel) { }
+            Button("Rename") {
+                renameConversation()
+            }
+        }
+        .alert("Delete Conversation?", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                deleteConversation()
+            }
+        } message: {
+            Text("This action cannot be undone.")
+        }
+    }
+
+    // MARK: - Actions
+
+    private func togglePin() {
+        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
+            appState.workspace.conversations[index].isPinned.toggle()
+        }
+    }
+
+    private func toggleStar() {
+        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
+            appState.workspace.conversations[index].isStarred.toggle()
+        }
+    }
+
+    private func renameConversation() {
+        guard !newTitle.isEmpty else { return }
+        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
+            appState.workspace.conversations[index].title = newTitle
+        }
+    }
+
+    private func deleteConversation() {
+        appState.workspace.conversations.removeAll { $0.id == conversation.id }
+        appState.selectedConversationId = nil
     }
 
     private func sendMessage() {

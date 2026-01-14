@@ -96,6 +96,99 @@ public struct BlockID: Hashable, Codable, Sendable, CustomStringConvertible {
     public var description: String { rawValue }
 }
 
+// MARK: - Block Operations
+
+extension Block {
+    /// Creates a duplicate of this block with a new ID
+    public func duplicate() -> Block {
+        switch self {
+        case .text(let block):
+            return .text(TextBlock(content: block.content, style: block.style))
+        case .heading(let block):
+            return .heading(HeadingBlock(content: block.content, level: block.level))
+        case .bulletList(let block):
+            return .bulletList(BulletListBlock(items: block.items.map { ListItem(content: $0.content, children: $0.children) }))
+        case .numberedList(let block):
+            return .numberedList(NumberedListBlock(items: block.items.map { ListItem(content: $0.content, children: $0.children) }))
+        case .todo(let block):
+            return .todo(TodoBlock(items: block.items.map { TodoItem(content: $0.content, isCompleted: $0.isCompleted, dueDate: $0.dueDate) }))
+        case .code(let block):
+            return .code(CodeBlock(content: block.content, language: block.language))
+        case .quote(let block):
+            return .quote(QuoteBlock(content: block.content, attribution: block.attribution))
+        case .divider:
+            return .divider(DividerBlock())
+        case .callout(let block):
+            return .callout(CalloutBlock(content: block.content, icon: block.icon, style: block.style))
+        case .image(let block):
+            return .image(ImageBlock(url: block.url, localPath: block.localPath, caption: block.caption, alt: block.alt))
+        case .agent(let block):
+            return .agent(AgentBlock(agentId: block.agentId, prompt: block.prompt, content: block.content))
+        }
+    }
+
+    /// Extracts the primary text content from this block
+    public func extractContent() -> String {
+        switch self {
+        case .text(let block): return block.content
+        case .heading(let block): return block.content
+        case .bulletList(let block): return block.items.map { $0.content }.joined(separator: "\n")
+        case .numberedList(let block): return block.items.map { $0.content }.joined(separator: "\n")
+        case .todo(let block): return block.items.map { $0.content }.joined(separator: "\n")
+        case .code(let block): return block.content
+        case .quote(let block): return block.content
+        case .divider: return ""
+        case .callout(let block): return block.content
+        case .image(let block): return block.caption ?? ""
+        case .agent(let block): return block.prompt
+        }
+    }
+
+    /// Sets the content of this block (mutating)
+    public mutating func setContent(_ content: String) {
+        switch self {
+        case .text(var block):
+            block.content = content
+            self = .text(block)
+        case .heading(var block):
+            block.content = content
+            self = .heading(block)
+        case .bulletList(var block):
+            let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
+            block.items = lines.map { ListItem(content: $0) }
+            if block.items.isEmpty { block.items = [ListItem(content: "")] }
+            self = .bulletList(block)
+        case .numberedList(var block):
+            let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
+            block.items = lines.map { ListItem(content: $0) }
+            if block.items.isEmpty { block.items = [ListItem(content: "")] }
+            self = .numberedList(block)
+        case .todo(var block):
+            let lines = content.components(separatedBy: "\n").filter { !$0.isEmpty }
+            block.items = lines.map { TodoItem(content: $0) }
+            if block.items.isEmpty { block.items = [TodoItem(content: "")] }
+            self = .todo(block)
+        case .code(var block):
+            block.content = content
+            self = .code(block)
+        case .quote(var block):
+            block.content = content
+            self = .quote(block)
+        case .divider:
+            break // Dividers have no content
+        case .callout(var block):
+            block.content = content
+            self = .callout(block)
+        case .image(var block):
+            block.caption = content.isEmpty ? nil : content
+            self = .image(block)
+        case .agent(var block):
+            block.prompt = content
+            self = .agent(block)
+        }
+    }
+}
+
 // MARK: - Block Types
 
 public struct TextBlock: Codable, Sendable {

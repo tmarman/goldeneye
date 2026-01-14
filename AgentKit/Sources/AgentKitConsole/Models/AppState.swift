@@ -38,6 +38,9 @@ public final class AppState: ObservableObject {
     /// Agent delegation manager - handles agent-to-agent task delegation
     let delegationManager: AgentDelegationManager
 
+    /// MCP connection manager - handles connections to MCP servers
+    let mcpManager: MCPManager
+
     /// Current spaces loaded from SpaceManager (for UI binding)
     @Published var spaces: [SpaceViewModel] = []
 
@@ -157,22 +160,73 @@ public final class AppState: ObservableObject {
         self.agentRegistry = AgentRegistry()
         self.delegationManager = AgentDelegationManager(registry: agentRegistry)
 
-        // Start with a mock local agent for development
-        localAgent = ConnectedAgent(
-            id: "local",
-            name: "Local Agent",
-            url: URL(string: "http://127.0.0.1:8080")!,
-            status: .disconnected
-        )
+        // Initialize MCP Manager
+        self.mcpManager = MCPManager()
+
+        // Initialize local agent using settings
+        updateLocalAgentFromSettings()
 
         // Load content in background
         Task {
             await loadSpaces()
             await loadDocuments()
+
+            // Auto-connect if enabled
+            if UserDefaults.standard.bool(forKey: "autoConnectLocal") {
+                await autoConnectToServer()
+            }
         }
 
         // Keep sample conversation for development
         setupSampleConversation()
+
+        // Observe settings changes
+        setupSettingsObservers()
+    }
+
+    /// Update local agent URL from UserDefaults
+    private func updateLocalAgentFromSettings() {
+        let host = UserDefaults.standard.string(forKey: "localAgentHost") ?? "127.0.0.1"
+        let port = UserDefaults.standard.integer(forKey: "localAgentPort")
+        let effectivePort = port == 0 ? 8080 : port
+        let url = URL(string: "http://\(host):\(effectivePort)")!
+
+        if localAgent == nil {
+            localAgent = ConnectedAgent(
+                id: "local",
+                name: "Local Agent",
+                url: url,
+                status: .disconnected
+            )
+        } else {
+            localAgent?.url = url
+        }
+    }
+
+    /// Setup observers for settings changes
+    private func setupSettingsObservers() {
+        // Observe host/port changes
+        NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.updateLocalAgentFromSettings()
+            }
+        }
+    }
+
+    /// Auto-connect to server if it's running
+    private func autoConnectToServer() async {
+        // Check if server is already running
+        let serverManager = ServerManager.shared
+        if serverManager.isRunning {
+            await connectToLocalAgent()
+        } else if await serverManager.checkServerHealth() {
+            // Server is running externally
+            await connectToLocalAgent()
+        }
     }
 
     private func setupSampleConversation() {
@@ -718,7 +772,7 @@ public final class AppState: ObservableObject {
 
     func submitTask(_ prompt: String, to agent: ConnectedAgent) async {
         // Create initial task info
-        var task = TaskInfo(
+        let task = TaskInfo(
             id: UUID().uuidString,
             agentId: agent.id,
             prompt: prompt,
@@ -866,15 +920,53 @@ public final class AppState: ObservableObject {
         }
     }
 
-    /// Load timeline items from OpenSpace
+    /// Load timeline items from OpenSpace and real Calendar
     func loadTimelineItems() async {
+        // Load items from space manager
         let items = await spaceManager.openSpace.items()
-
-        timelineItems = items.map { item in
+        var allItems = items.map { item in
             timelineItemViewModel(from: item)
         }
 
-        // Also load sample events if empty
+        // Load real calendar events
+        let calendarService = CalendarService.shared
+
+        // Request access if needed
+        if calendarService.authorizationStatus == .notDetermined {
+            _ = await calendarService.requestAccess()
+        }
+
+        // If we have calendar access, load real events
+        if calendarService.authorizationStatus == .fullAccess ||
+           calendarService.authorizationStatus == .authorized {
+            await calendarService.refreshEvents()
+
+            // Convert calendar events to timeline items
+            let calendarItems = calendarService.todayEvents.map { event in
+                TimelineItemViewModel(
+                    type: .event,
+                    title: event.title,
+                    subtitle: event.location,
+                    timestamp: event.startDate,
+                    icon: event.isAllDay ? "calendar" : "clock",
+                    iconColor: event.calendarColor,
+                    eventDetails: EventDetails(
+                        title: event.title,
+                        timeRange: event.timeRange,
+                        attendees: event.attendees,
+                        notes: event.notes,
+                        color: event.calendarColor
+                    )
+                )
+            }
+
+            allItems.append(contentsOf: calendarItems)
+        }
+
+        // Sort by timestamp
+        timelineItems = allItems.sorted { $0.timestamp < $1.timestamp }
+
+        // Add sample items only if completely empty
         if timelineItems.isEmpty {
             setupSampleTimelineItems()
         }
@@ -1072,6 +1164,123 @@ public final class AppState: ObservableObject {
         decisionCards.filter { $0.isActionable }.count
     }
 
+    // MARK: - Review Operations
+
+    /// All reviews loaded from storage
+    @Published var reviews: [Review] = []
+
+    /// Load reviews (from storage or sample data for development)
+    func loadReviews(status: ReviewStatus? = nil, searchText: String = "") async {
+        // For development, set up sample reviews if empty
+        if reviews.isEmpty {
+            setupSampleReviews()
+        }
+
+        // Filter would happen here with real storage
+    }
+
+    /// Open a draft review for comments and approvals
+    func openReview(_ reviewId: ReviewID) async {
+        guard let index = reviews.firstIndex(where: { $0.id == reviewId }) else { return }
+        guard reviews[index].status == .draft else { return }
+
+        reviews[index].status = .open
+        reviews[index].updatedAt = Date()
+    }
+
+    /// Approve a review
+    func approveReview(_ reviewId: ReviewID, comment: String? = nil) async {
+        guard let index = reviews.firstIndex(where: { $0.id == reviewId }) else { return }
+
+        let approval = Approval(
+            reviewer: Author(name: "You"),
+            status: .approved,
+            comment: comment
+        )
+        reviews[index].approvals.append(approval)
+        reviews[index].status = .approved
+        reviews[index].updatedAt = Date()
+    }
+
+    /// Request changes on a review
+    func requestChangesOnReview(_ reviewId: ReviewID, comment: String) async {
+        guard let index = reviews.firstIndex(where: { $0.id == reviewId }) else { return }
+
+        let approval = Approval(
+            reviewer: Author(name: "You"),
+            status: .changesRequested,
+            comment: comment
+        )
+        reviews[index].approvals.append(approval)
+        reviews[index].status = .changesRequested
+        reviews[index].updatedAt = Date()
+    }
+
+    /// Merge an approved review
+    func mergeReview(_ reviewId: ReviewID) async {
+        guard let index = reviews.firstIndex(where: { $0.id == reviewId }) else { return }
+        guard reviews[index].status == .approved else { return }
+
+        reviews[index].status = .merged
+        reviews[index].mergedAt = Date()
+        reviews[index].updatedAt = Date()
+    }
+
+    /// Get a review by ID
+    func getReview(_ reviewId: ReviewID) -> Review? {
+        reviews.first { $0.id == reviewId }
+    }
+
+    private func setupSampleReviews() {
+        // Sample reviews for development
+        let review1 = Review(
+            title: "Update documentation for Q4 release",
+            description: "Comprehensive update to the user guide and API documentation.",
+            author: Author.agent("Research Agent"),
+            baseCommit: "abc123",
+            headCommit: "def456",
+            targetBranch: "main",
+            sourceBranch: "docs/q4-update",
+            status: .open,
+            summary: ReviewSummary(
+                overview: "Added new sections for agent configuration and updated API examples.",
+                filesChanged: 5,
+                additions: 342,
+                deletions: 87,
+                keyChanges: [
+                    KeyChange(type: .content, description: "Added agent setup guide", files: ["docs/agents.md"]),
+                    KeyChange(type: .content, description: "Updated API reference", files: ["docs/api.md"])
+                ],
+                impact: .moderate
+            ),
+            changes: []
+        )
+
+        let review2 = Review(
+            title: "Add fitness tracking integration",
+            description: "Connects to Apple Health for workout data.",
+            author: Author.agent("Technical Agent"),
+            baseCommit: "ghi789",
+            headCommit: "jkl012",
+            targetBranch: "main",
+            sourceBranch: "feature/fitness",
+            status: .draft,
+            summary: ReviewSummary(
+                overview: "New fitness tracking module with Health app integration.",
+                filesChanged: 8,
+                additions: 567,
+                deletions: 12,
+                keyChanges: [
+                    KeyChange(type: .code, description: "Added HealthKit integration", files: ["Sources/Fitness/HealthService.swift"])
+                ],
+                impact: .major
+            ),
+            changes: []
+        )
+
+        reviews = [review1, review2]
+    }
+
     private func setupSampleDecisionCards() async {
         // Sample decision cards for development
         let card1 = DecisionCard(
@@ -1243,6 +1452,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     // Infrastructure
     case agents
     case connections
+    case settings
 
     var id: String { rawValue }
 
@@ -1257,6 +1467,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .approvals: "Approvals"
         case .agents: "Agents"
         case .connections: "Connections"
+        case .settings: "Settings"
         }
     }
 
@@ -1271,6 +1482,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .approvals: "checkmark.shield"
         case .agents: "person.2"
         case .connections: "link"
+        case .settings: "gearshape"
         }
     }
 
@@ -1283,7 +1495,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
             return .workspace
         case .tasks, .decisions, .approvals:
             return .activity
-        case .agents, .connections:
+        case .agents, .connections, .settings:
             return .infrastructure
         }
     }
@@ -1301,7 +1513,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     }
 
     static var infrastructureItems: [SidebarItem] {
-        [.agents, .connections]
+        [.agents, .connections, .settings]
     }
 }
 
@@ -1441,6 +1653,7 @@ struct SpaceViewModel: Identifiable {
     let contributorCount: Int
     let updatedAt: Date
     var isStarred: Bool
+    var path: URL?
 
     init(
         id: String = UUID().uuidString,
@@ -1452,7 +1665,8 @@ struct SpaceViewModel: Identifiable {
         documentCount: Int = 0,
         contributorCount: Int = 1,
         updatedAt: Date = Date(),
-        isStarred: Bool = false
+        isStarred: Bool = false,
+        path: URL? = nil
     ) {
         self.id = id
         self.name = name
@@ -1461,6 +1675,7 @@ struct SpaceViewModel: Identifiable {
         self.icon = icon
         self.color = color
         self.documentCount = documentCount
+        self.path = path
         self.contributorCount = contributorCount
         self.updatedAt = updatedAt
         self.isStarred = isStarred

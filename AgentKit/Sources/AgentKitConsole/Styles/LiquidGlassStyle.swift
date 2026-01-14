@@ -464,3 +464,529 @@ struct GlassMenuItem: View {
         .onHover { isHovered = $0 }
     }
 }
+
+// MARK: - Shimmer Effect
+
+/// A shimmer loading effect for skeleton UI
+struct ShimmerModifier: ViewModifier {
+    @State private var phase: CGFloat = 0
+    let animation: Animation
+
+    init(animation: Animation = Animation.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+        self.animation = animation
+    }
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(
+                GeometryReader { geometry in
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .white.opacity(0.4), location: 0.3),
+                            .init(color: .white.opacity(0.5), location: 0.5),
+                            .init(color: .white.opacity(0.4), location: 0.7),
+                            .init(color: .clear, location: 1)
+                        ]),
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: geometry.size.width * 2)
+                    .offset(x: -geometry.size.width + phase * geometry.size.width * 2)
+                }
+            )
+            .mask(content)
+            .onAppear {
+                withAnimation(animation) {
+                    phase = 1
+                }
+            }
+    }
+}
+
+extension View {
+    /// Apply shimmer loading effect
+    func shimmer() -> some View {
+        modifier(ShimmerModifier())
+    }
+}
+
+// MARK: - Glass Loading Skeleton
+
+/// A skeleton placeholder with glassmorphic styling
+struct GlassSkeleton: View {
+    var height: CGFloat = 16
+    var cornerRadius: CGFloat = 4
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius)
+            .fill(Color.secondary.opacity(0.15))
+            .frame(height: height)
+            .shimmer()
+    }
+}
+
+// MARK: - Rich Empty State
+
+/// A polished empty state with illustration
+struct GlassEmptyState: View {
+    let icon: String
+    let title: String
+    let message: String
+    var actionTitle: String? = nil
+    var action: (() -> Void)? = nil
+
+    var body: some View {
+        VStack(spacing: 20) {
+            // Icon with animated background
+            ZStack {
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            colors: [Color.accentColor.opacity(0.15), Color.accentColor.opacity(0.03)],
+                            center: .center,
+                            startRadius: 0,
+                            endRadius: 60
+                        )
+                    )
+                    .frame(width: 120, height: 120)
+
+                Image(systemName: icon)
+                    .font(.system(size: 44, weight: .light))
+                    .foregroundStyle(Color.accentColor.opacity(0.8))
+                    .symbolEffect(.pulse, options: .repeating.speed(0.3))
+            }
+
+            VStack(spacing: 8) {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.primary)
+
+                Text(message)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 280)
+            }
+
+            if let actionTitle, let action {
+                Button(action: action) {
+                    Text(actionTitle)
+                        .font(.body.weight(.medium))
+                }
+                .buttonStyle(GlassButtonStyle(isProminent: true))
+                .padding(.top, 8)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Pulse Ring Effect
+
+/// An animated pulse ring effect for active states
+struct PulseRing: View {
+    let color: Color
+    @State private var animate = false
+
+    var body: some View {
+        Circle()
+            .stroke(color.opacity(0.5), lineWidth: 2)
+            .scaleEffect(animate ? 1.8 : 1.0)
+            .opacity(animate ? 0 : 0.8)
+            .animation(
+                .easeOut(duration: 1.2).repeatForever(autoreverses: false),
+                value: animate
+            )
+            .onAppear { animate = true }
+    }
+}
+
+// MARK: - Floating Action Button
+
+/// A floating action button with glassmorphic styling
+struct GlassFloatingButton: View {
+    let icon: String
+    let action: () -> Void
+    @State private var isHovered = false
+    @State private var isPressed = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                // Glow effect
+                Circle()
+                    .fill(Color.accentColor.opacity(0.3))
+                    .blur(radius: 12)
+                    .scaleEffect(isHovered ? 1.3 : 1.0)
+
+                // Main button
+                Circle()
+                    .fill(Color.accentColor.gradient)
+                    .frame(width: 56, height: 56)
+                    .overlay(
+                        Circle()
+                            .stroke(.white.opacity(0.3), lineWidth: 0.5)
+                    )
+                    .shadow(color: Color.accentColor.opacity(0.4), radius: isHovered ? 16 : 10, y: 4)
+
+                Image(systemName: icon)
+                    .font(.title2.weight(.medium))
+                    .foregroundStyle(.white)
+            }
+            .scaleEffect(isPressed ? 0.92 : (isHovered ? 1.05 : 1.0))
+            .animation(.spring(response: 0.2, dampingFraction: 0.6), value: isPressed)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in isPressed = true }
+                .onEnded { _ in isPressed = false }
+        )
+    }
+}
+
+// MARK: - Progress Ring
+
+/// A circular progress indicator with glassmorphic styling
+struct GlassProgressRing: View {
+    let progress: Double  // 0.0 to 1.0
+    var lineWidth: CGFloat = 4
+    var size: CGFloat = 44
+
+    var body: some View {
+        ZStack {
+            // Background ring
+            Circle()
+                .stroke(Color.secondary.opacity(0.2), lineWidth: lineWidth)
+
+            // Progress ring
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(
+                    AngularGradient(
+                        colors: [Color.accentColor, Color.accentColor.opacity(0.5)],
+                        center: .center,
+                        startAngle: .degrees(0),
+                        endAngle: .degrees(360 * progress)
+                    ),
+                    style: StrokeStyle(lineWidth: lineWidth, lineCap: .round)
+                )
+                .rotationEffect(.degrees(-90))
+                .animation(.spring(response: 0.3), value: progress)
+        }
+        .frame(width: size, height: size)
+    }
+}
+
+// MARK: - Notification Badge
+
+/// A bouncing notification badge for attention
+struct GlassNotificationBadge: View {
+    let count: Int
+    @State private var bounce = false
+
+    var body: some View {
+        Text("\(min(count, 99))")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(.white)
+            .padding(.horizontal, count > 9 ? 6 : 4)
+            .padding(.vertical, 2)
+            .background(
+                Capsule()
+                    .fill(Color.red.gradient)
+                    .shadow(color: .red.opacity(0.4), radius: 4)
+            )
+            .scaleEffect(bounce ? 1.2 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.5), value: bounce)
+            .onAppear {
+                bounce = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    bounce = false
+                }
+            }
+    }
+}
+
+// MARK: - Notes-Style Components
+// Inspired by Apple Notes' clean, minimal aesthetic
+
+/// A Notes-style toolbar button (minimal, icon-only with hover state)
+struct NotesToolbarButton: View {
+    let icon: String
+    let action: () -> Void
+    var isActive: Bool = false
+    var help: String? = nil
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(isActive ? Color.accentColor : (isHovered ? .primary : .secondary))
+                .frame(width: 28, height: 28)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(isHovered ? Color.primary.opacity(0.08) : .clear)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .help(help ?? "")
+    }
+}
+
+/// A Notes-style search field (inline, minimal)
+struct NotesSearchField: View {
+    @Binding var text: String
+    var placeholder: String = "Search"
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14))
+                .foregroundStyle(.secondary)
+
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .focused($isFocused)
+
+            if !text.isEmpty {
+                Button(action: { text = "" }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isFocused ? Color.primary.opacity(0.08) : Color.primary.opacity(0.05))
+        )
+        .animation(.easeInOut(duration: 0.15), value: isFocused)
+    }
+}
+
+/// A Notes-style list item (document preview style)
+struct NotesListItem: View {
+    let title: String
+    var subtitle: String? = nil
+    var date: Date? = nil
+    var isSelected: Bool = false
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+
+            HStack(spacing: 0) {
+                if let date {
+                    Text(formattedDate(date))
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+
+                if let subtitle, !subtitle.isEmpty {
+                    Text("  ")
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isSelected ? Color.accentColor.opacity(0.15) : (isHovered ? Color.primary.opacity(0.05) : .clear))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? Color.accentColor.opacity(0.3) : .clear, lineWidth: 1)
+        )
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+    }
+
+    private func formattedDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        if Calendar.current.isDateInToday(date) {
+            formatter.dateFormat = "h:mm a"
+        } else {
+            formatter.dateFormat = "M/d/yy"
+        }
+        return formatter.string(from: date)
+    }
+}
+
+/// A Notes-style section header
+struct NotesSectionHeader: View {
+    let title: String
+    var isCollapsible: Bool = false
+    var isCollapsed: Bool = false
+    var onToggle: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if isCollapsible {
+                Button(action: { onToggle?() }) {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16, height: 16)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Text(title)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(.primary)
+
+            Spacer()
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+    }
+}
+
+/// A Notes-style unified toolbar (combines sidebar toggle, title, and actions)
+struct NotesToolbar<LeadingContent: View, TrailingContent: View>: View {
+    let title: String
+    var subtitle: String? = nil
+    let leadingContent: LeadingContent
+    let trailingContent: TrailingContent
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        @ViewBuilder leading: () -> LeadingContent,
+        @ViewBuilder trailing: () -> TrailingContent
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.leadingContent = leading()
+        self.trailingContent = trailing()
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            leadingContent
+
+            VStack(alignment: .leading, spacing: 0) {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+
+            trailingContent
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color(.windowBackgroundColor).opacity(0.95))
+    }
+}
+
+/// A Notes-style divider (thinner, more subtle)
+struct NotesDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(height: 0.5)
+    }
+}
+
+// MARK: - Combined Notes + Craft Styles
+
+/// A hybrid card that combines Notes cleanliness with Craft's subtle glass
+struct HybridCard<Content: View>: View {
+    let content: Content
+    var isSelected: Bool = false
+    @State private var isHovered = false
+
+    init(isSelected: Bool = false, @ViewBuilder content: () -> Content) {
+        self.content = content()
+        self.isSelected = isSelected
+    }
+
+    var body: some View {
+        content
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isSelected ? Color.accentColor.opacity(0.08) : Color(.controlBackgroundColor))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(
+                        isSelected ? Color.accentColor.opacity(0.3) : (isHovered ? Color.primary.opacity(0.12) : Color.primary.opacity(0.06)),
+                        lineWidth: 1
+                    )
+            )
+            .shadow(
+                color: .black.opacity(isHovered ? 0.08 : 0.04),
+                radius: isHovered ? 8 : 4,
+                y: isHovered ? 3 : 1
+            )
+            .scaleEffect(isHovered ? 1.005 : 1.0)
+            .animation(.easeInOut(duration: 0.15), value: isHovered)
+            .animation(.easeInOut(duration: 0.15), value: isSelected)
+            .onHover { isHovered = $0 }
+    }
+}
+
+/// A subtle icon button used throughout both styles
+struct IconButton: View {
+    let icon: String
+    let action: () -> Void
+    var size: CGFloat = 20
+    var tint: Color = .secondary
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: size * 0.7, weight: .medium))
+                .foregroundStyle(isHovered ? .primary : tint)
+                .frame(width: size, height: size)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+/// Date display like Notes uses
+struct DateDisplay: View {
+    let date: Date
+
+    var body: some View {
+        Text(formattedDate)
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+    }
+
+    private var formattedDate: String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+}

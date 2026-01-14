@@ -297,6 +297,24 @@ public struct ReviewIndexEntry: Codable, Identifiable, Sendable {
     public let spaceId: SpaceID?
     public let createdAt: Date
     public let updatedAt: Date
+
+    public init(
+        id: ReviewID,
+        title: String,
+        author: String,
+        status: ReviewStatus,
+        spaceId: SpaceID?,
+        createdAt: Date,
+        updatedAt: Date
+    ) {
+        self.id = id
+        self.title = title
+        self.author = author
+        self.status = status
+        self.spaceId = spaceId
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
 }
 
 // MARK: - Errors

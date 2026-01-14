@@ -24,20 +24,29 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func createAndShowWindow() {
+        // Ensure app is a regular app that can receive focus
+        NSApp.setActivationPolicy(.regular)
+
         if window == nil {
             let contentView = ContentView()
                 .environmentObject(AppState.shared)
 
             window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
             window?.title = "Goldeneye"
+            window?.titlebarAppearsTransparent = true
+            window?.titleVisibility = .hidden
             window?.center()
             window?.contentView = NSHostingView(rootView: contentView)
             window?.setFrameAutosaveName("MainWindow")
+            window?.isReleasedWhenClosed = false
+
+            // Make window key window
+            window?.becomeKey()
         }
 
         window?.makeKeyAndOrderFront(nil)

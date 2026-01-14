@@ -15,18 +15,56 @@ struct DocumentEditorView: View {
     @State private var isDropTargeted = false
     @State private var showImportSheet = false
     @State private var importContent: ImportContent?
+    @State private var saveStatus: SaveStatus = .saved
+
+    enum SaveStatus {
+        case saved, saving, unsaved
+    }
 
     var body: some View {
-        mainContent
-            .background(Color(.textBackgroundColor))
-            .overlay { dropTargetOverlay.animation(.liquidGlassQuick, value: isDropTargeted) }
-            .overlay { blockMenuOverlay }
-            .onDrop(of: [.fileURL, .plainText, .utf8PlainText], isTargeted: $isDropTargeted) { providers in
-                handleDrop(providers: providers)
-                return true
+        ZStack(alignment: .bottomTrailing) {
+            mainContent
+                .background(Color(.textBackgroundColor))
+                .overlay { dropTargetOverlay.animation(.liquidGlassQuick, value: isDropTargeted) }
+                .overlay { blockMenuOverlay }
+                .onDrop(of: [.fileURL, .plainText, .utf8PlainText], isTargeted: $isDropTargeted) { providers in
+                    handleDrop(providers: providers)
+                    return true
+                }
+                .sheet(isPresented: $showImportSheet) { importSheet }
+                .onChange(of: document.updatedAt) { _, _ in debouncedSave() }
+
+            // Save indicator
+            saveIndicator
+                .padding(12)
+        }
+    }
+
+    @ViewBuilder
+    private var saveIndicator: some View {
+        HStack(spacing: 6) {
+            switch saveStatus {
+            case .saved:
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green.opacity(0.7))
+                Text("Saved")
+            case .saving:
+                ProgressView()
+                    .scaleEffect(0.6)
+                Text("Saving...")
+            case .unsaved:
+                Image(systemName: "circle.fill")
+                    .foregroundStyle(.orange.opacity(0.7))
+                Text("Unsaved")
             }
-            .sheet(isPresented: $showImportSheet) { importSheet }
-            .onChange(of: document.updatedAt) { _, _ in debouncedSave() }
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.ultraThinMaterial, in: Capsule())
+        .opacity(saveStatus == .saved ? 0 : 1)
+        .animation(.easeInOut(duration: 0.3), value: saveStatus)
     }
 
     // MARK: - View Components
@@ -40,7 +78,10 @@ struct DocumentEditorView: View {
 
                 blocksContent
 
-                AddBlockButton { showBlockMenuAt(index: document.blocks.count) }
+                AddBlockButton(
+                    onAdd: { insertBlock(type: .text, at: document.blocks.count) },
+                    onShowMenu: { showBlockMenuAt(index: document.blocks.count) }
+                )
                     .padding(.top, 8)
 
                 if document.blocks.isEmpty {
@@ -63,7 +104,9 @@ struct DocumentEditorView: View {
                 onAddBlock: { showBlockMenuAt(index: index + 1) },
                 onDelete: { withAnimation(.liquidGlass) { deleteBlock(at: index) } },
                 onMoveUp: index > 0 ? { withAnimation(.liquidGlass) { moveBlock(from: index, to: index - 1) } } : nil,
-                onMoveDown: index < document.blocks.count - 1 ? { withAnimation(.liquidGlass) { moveBlock(from: index, to: index + 1) } } : nil
+                onMoveDown: index < document.blocks.count - 1 ? { withAnimation(.liquidGlass) { moveBlock(from: index, to: index + 1) } } : nil,
+                onDuplicate: { withAnimation(.liquidGlass) { duplicateBlock(at: index) } },
+                onTurnInto: { type in withAnimation(.liquidGlass) { turnBlockInto(at: index, type: type) } }
             )
             .transition(.asymmetric(
                 insertion: .opacity.combined(with: .scale(scale: 0.95)).combined(with: .offset(y: -8)),
@@ -135,13 +178,27 @@ struct DocumentEditorView: View {
     }
 
     private func debouncedSave() {
+        saveStatus = .unsaved
         saveTask?.cancel()
         saveTask = Task {
             do {
                 try await Task.sleep(for: .seconds(1))
+                await MainActor.run { saveStatus = .saving }
                 try await appState.saveDocument(document)
+                await MainActor.run {
+                    saveStatus = .saved
+                    // Hide saved indicator after a moment
+                    Task {
+                        try? await Task.sleep(for: .seconds(2))
+                        if saveStatus == .saved {
+                            // Already saved, stays hidden via opacity
+                        }
+                    }
+                }
+            } catch is CancellationError {
+                // Cancelled - ignore
             } catch {
-                // Cancelled or save failed - ignore
+                await MainActor.run { saveStatus = .unsaved }
             }
         }
     }
@@ -228,6 +285,27 @@ struct DocumentEditorView: View {
         document.blocks.insert(block, at: destination)
         document.updatedAt = Date()
     }
+
+    private func duplicateBlock(at index: Int) {
+        let original = document.blocks[index]
+        let duplicate = original.duplicate()
+        document.blocks.insert(duplicate, at: index + 1)
+        focusedBlockId = duplicate.id
+        document.updatedAt = Date()
+    }
+
+    private func turnBlockInto(at index: Int, type: BlockType) {
+        let currentBlock = document.blocks[index]
+        let content = currentBlock.extractContent()
+
+        // Create new block with the content from the old one
+        var newBlock = type.createBlock()
+        newBlock.setContent(content)
+
+        document.blocks[index] = newBlock
+        focusedBlockId = newBlock.id
+        document.updatedAt = Date()
+    }
 }
 
 // MARK: - Document Title
@@ -256,6 +334,8 @@ struct BlockRow: View {
     let onDelete: () -> Void
     let onMoveUp: (() -> Void)?
     let onMoveDown: (() -> Void)?
+    let onDuplicate: () -> Void
+    let onTurnInto: (BlockType) -> Void
 
     @State private var isHovered = false
 
@@ -267,7 +347,9 @@ struct BlockRow: View {
                 onAdd: onAddBlock,
                 onDelete: onDelete,
                 onMoveUp: onMoveUp,
-                onMoveDown: onMoveDown
+                onMoveDown: onMoveDown,
+                onDuplicate: onDuplicate,
+                onTurnInto: onTurnInto
             )
 
             // Block content
@@ -289,6 +371,8 @@ struct BlockHandle: View {
     let onDelete: () -> Void
     let onMoveUp: (() -> Void)?
     let onMoveDown: (() -> Void)?
+    let onDuplicate: () -> Void
+    let onTurnInto: (BlockType) -> Void
 
     var body: some View {
         HStack(spacing: 2) {
@@ -297,17 +381,39 @@ struct BlockHandle: View {
 
             // Drag handle with menu
             Menu {
-                Button("Delete", role: .destructive, action: onDelete)
+                Button(action: onDelete) {
+                    Label("Delete", systemImage: "trash")
+                }
+
                 Divider()
+
                 if let onMoveUp {
-                    Button("Move Up", action: onMoveUp)
+                    Button(action: onMoveUp) {
+                        Label("Move Up", systemImage: "arrow.up")
+                    }
                 }
                 if let onMoveDown {
-                    Button("Move Down", action: onMoveDown)
+                    Button(action: onMoveDown) {
+                        Label("Move Down", systemImage: "arrow.down")
+                    }
                 }
+
                 Divider()
-                Button("Duplicate") { /* TODO */ }
-                Button("Turn into...") { /* TODO */ }
+
+                Button(action: onDuplicate) {
+                    Label("Duplicate", systemImage: "plus.square.on.square")
+                }
+
+                // Turn into submenu
+                Menu {
+                    ForEach(BlockType.allCases, id: \.self) { type in
+                        Button(action: { onTurnInto(type) }) {
+                            Label(type.displayName, systemImage: type.icon)
+                        }
+                    }
+                } label: {
+                    Label("Turn into...", systemImage: "arrow.triangle.swap")
+                }
             } label: {
                 Image(systemName: "line.3.horizontal")
                     .font(.caption)
@@ -832,22 +938,36 @@ struct AgentBlockView: View {
 // MARK: - Add Block Button
 
 struct AddBlockButton: View {
-    let action: () -> Void
+    let onAdd: () -> Void      // Click to add text block immediately
+    let onShowMenu: () -> Void // Right-click for other block types
+    @State private var isHovered = false
+
+    // Convenience init for simple case
+    init(action: @escaping () -> Void) {
+        self.onAdd = action
+        self.onShowMenu = action
+    }
+
+    init(onAdd: @escaping () -> Void, onShowMenu: @escaping () -> Void) {
+        self.onAdd = onAdd
+        self.onShowMenu = onShowMenu
+    }
 
     var body: some View {
-        Button(action: action) {
+        Button(action: onAdd) {
             HStack(spacing: 8) {
                 Image(systemName: "plus")
-                Text("Add block")
+                Text("Add text")
             }
             .font(.subheadline)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(isHovered ? .primary : .secondary)
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(Color(.controlBackgroundColor))
+            .background(isHovered ? Color(.controlBackgroundColor).opacity(0.8) : Color(.controlBackgroundColor).opacity(0.5))
             .clipShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }
 

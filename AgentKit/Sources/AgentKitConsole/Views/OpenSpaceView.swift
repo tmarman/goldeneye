@@ -1,4 +1,5 @@
 import AgentKit
+import EventKit
 import SwiftUI
 
 // MARK: - Open Space View
@@ -8,12 +9,43 @@ struct OpenSpaceView: View {
     @EnvironmentObject private var appState: AppState
     @State private var quickInput = ""
     @State private var selectedTab: OpenSpaceTab = .today
+    @State private var itemFilter: TimelineFilter = .all
+    @State private var currentMeeting: EKEvent?
+    @State private var captureMode: CaptureMode = .note
     @FocusState private var isInputFocused: Bool
+
+    private let eventStore = EKEventStore()
+
+    enum TimelineFilter: String, CaseIterable {
+        case all = "All Items"
+        case events = "Events Only"
+        case tasks = "Tasks Only"
+        case notes = "Notes Only"
+    }
+
+    enum CaptureMode: String, CaseIterable {
+        case note = "Note"
+        case brainstorm = "Brainstorm"
+        case transcribe = "Transcribe"
+
+        var icon: String {
+            switch self {
+            case .note: return "square.and.pencil"
+            case .brainstorm: return "lightbulb.max"
+            case .transcribe: return "waveform"
+            }
+        }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            // Quick Capture Bar
-            quickCaptureBar
+            // Active meeting banner (if any)
+            if let meeting = currentMeeting {
+                activeMeetingBanner(meeting)
+            }
+
+            // Quick Capture Card - bigger, post-it style
+            quickCaptureCard
 
             Divider()
 
@@ -37,44 +69,206 @@ struct OpenSpaceView: View {
         .navigationTitle("Open Space")
         .task {
             await appState.loadTimelineItems()
+            await checkForActiveMeeting()
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                isInputFocused = true
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .focusQuickCapture)) { _ in
+            isInputFocused = true
         }
     }
 
-    // MARK: - Quick Capture Bar
+    // MARK: - Active Meeting Banner
 
-    private var quickCaptureBar: some View {
+    @ViewBuilder
+    private func activeMeetingBanner(_ meeting: EKEvent) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: "plus.circle.fill")
-                .font(.title2)
-                .foregroundStyle(Color.accentColor)
+            Circle()
+                .fill(Color(cgColor: meeting.calendar.cgColor))
+                .frame(width: 10, height: 10)
 
-            TextField("Quick capture... (notes, tasks, ideas)", text: $quickInput, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...3)
-                .focused($isInputFocused)
-                .onSubmit {
-                    submitCapture()
-                }
-
-            if !quickInput.isEmpty {
-                Button(action: submitCapture) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.title2)
-                        .foregroundStyle(Color.accentColor)
-                }
-                .buttonStyle(.plain)
-                .transition(.scale.combined(with: .opacity))
+            VStack(alignment: .leading, spacing: 2) {
+                Text("In meeting")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Text(meeting.title ?? "Untitled Meeting")
+                    .font(.subheadline.weight(.semibold))
             }
+
+            Spacer()
+
+            Text(meetingTimeRemaining(meeting))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+
+            Button("Link notes") {
+                // Link current quick capture to this meeting
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
         .padding()
-        .background {
-            if isInputFocused {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(Color.accentColor.opacity(0.05))
+        .background(Color(cgColor: meeting.calendar.cgColor).opacity(0.1))
+        .overlay(
+            Rectangle()
+                .fill(Color(cgColor: meeting.calendar.cgColor))
+                .frame(width: 4),
+            alignment: .leading
+        )
+    }
+
+    private func meetingTimeRemaining(_ meeting: EKEvent) -> String {
+        let remaining = meeting.endDate.timeIntervalSince(Date())
+        let minutes = Int(remaining / 60)
+        if minutes < 60 {
+            return "\(minutes)m left"
+        } else {
+            return "\(minutes / 60)h \(minutes % 60)m left"
+        }
+    }
+
+    // MARK: - Quick Capture Card (Post-it style)
+
+    private var quickCaptureCard: some View {
+        VStack(spacing: 12) {
+            captureModeSelector
+            captureTextArea
+            captureActionBar
+        }
+        .padding(16)
+        .background(captureCardBackground)
+        .overlay(captureCardBorder)
+        .padding()
+        .animation(.spring(response: 0.25), value: isInputFocused)
+        .animation(.spring(response: 0.25), value: captureMode)
+    }
+
+    @ViewBuilder
+    private var captureModeSelector: some View {
+        HStack(spacing: 4) {
+            ForEach(CaptureMode.allCases, id: \.self) { mode in
+                CaptureModeButton(
+                    mode: mode,
+                    isSelected: captureMode == mode,
+                    action: { captureMode = mode }
+                )
+            }
+
+            Spacer()
+
+            if captureMode == .transcribe {
+                recordButton
             }
         }
-        .animation(.spring(response: 0.25), value: isInputFocused)
-        .animation(.spring(response: 0.25), value: quickInput.isEmpty)
+    }
+
+    @ViewBuilder
+    private var recordButton: some View {
+        Button(action: startTranscription) {
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 8, height: 8)
+                Text("Record")
+            }
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Color.red.opacity(0.1), in: Capsule())
+            .foregroundStyle(.red)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var captureTextArea: some View {
+        TextEditor(text: $quickInput)
+            .font(.body)
+            .scrollContentBackground(.hidden)
+            .background(Color.clear)
+            .frame(minHeight: 100, maxHeight: 200)
+            .focused($isInputFocused)
+            .overlay(alignment: .topLeading) {
+                if quickInput.isEmpty {
+                    Text(capturePlaceholder)
+                        .foregroundStyle(.tertiary)
+                        .allowsHitTesting(false)
+                        .padding(.top, 8)
+                        .padding(.leading, 5)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var captureActionBar: some View {
+        HStack {
+            captureSuggestions
+            Spacer()
+            captureSubmitButton
+        }
+    }
+
+    @ViewBuilder
+    private var captureSuggestions: some View {
+        if !quickInput.isEmpty {
+            HStack(spacing: 8) {
+                if quickInput.contains("@") || quickInput.contains("action") {
+                    SuggestionChip(icon: "checklist", text: "Create task")
+                }
+                if quickInput.contains("tomorrow") || quickInput.contains("next week") {
+                    SuggestionChip(icon: "calendar.badge.plus", text: "Add reminder")
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var captureSubmitButton: some View {
+        Button(action: submitCapture) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up.circle.fill")
+                Text("Capture")
+            }
+            .font(.subheadline.weight(.medium))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(quickInput.isEmpty ? Color.secondary.opacity(0.2) : Color.accentColor)
+            .foregroundColor(quickInput.isEmpty ? .secondary : .white)
+            .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(quickInput.isEmpty)
+    }
+
+    @ViewBuilder
+    private var captureCardBackground: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .fill(isInputFocused ? Color.accentColor.opacity(0.05) : Color(.controlBackgroundColor).opacity(0.5))
+            .shadow(color: .black.opacity(0.05), radius: isInputFocused ? 8 : 0, y: 2)
+    }
+
+    @ViewBuilder
+    private var captureCardBorder: some View {
+        RoundedRectangle(cornerRadius: 16)
+            .stroke(isInputFocused ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
+    }
+
+    private var capturePlaceholder: String {
+        switch captureMode {
+        case .note:
+            return "Jot down notes, ideas, or tasks..."
+        case .brainstorm:
+            return "Brain dump your thoughts here..."
+        case .transcribe:
+            return "Press Record to start transcribing..."
+        }
+    }
+
+    private func startTranscription() {
+        // TODO: Start SpeechAnalyzer transcription
     }
 
     // MARK: - Tab Selector
@@ -105,13 +299,20 @@ struct OpenSpaceView: View {
 
             // Filter button
             Menu {
-                Button("All Items") {}
-                Button("Events Only") {}
-                Button("Tasks Only") {}
-                Button("Notes Only") {}
+                ForEach(TimelineFilter.allCases, id: \.self) { filter in
+                    Button(action: { itemFilter = filter }) {
+                        HStack {
+                            Text(filter.rawValue)
+                            if itemFilter == filter {
+                                Image(systemName: "checkmark")
+                            }
+                        }
+                    }
+                }
             } label: {
-                Image(systemName: "line.3.horizontal.decrease.circle")
+                Image(systemName: itemFilter == .all ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
                     .font(.title3)
+                    .foregroundStyle(itemFilter == .all ? Color.secondary : Color.accentColor)
             }
         }
         .padding(.horizontal)
@@ -121,13 +322,28 @@ struct OpenSpaceView: View {
     // MARK: - Filtered Items
 
     private var filteredItems: [TimelineItemViewModel] {
+        var items: [TimelineItemViewModel]
+
+        // Filter by tab first
         switch selectedTab {
         case .today:
-            return appState.timelineItems.filter { Calendar.current.isDateInToday($0.timestamp) }
+            items = appState.timelineItems.filter { Calendar.current.isDateInToday($0.timestamp) }
         case .upcoming:
-            return appState.timelineItems.filter { $0.timestamp > Date() }
+            items = appState.timelineItems.filter { $0.timestamp > Date() }
         case .activity:
-            return appState.timelineItems.filter { $0.type == .activity }
+            items = appState.timelineItems.filter { $0.type == .activity }
+        }
+
+        // Then apply type filter
+        switch itemFilter {
+        case .all:
+            return items
+        case .events:
+            return items.filter { $0.type == .event }
+        case .tasks:
+            return items.filter { $0.type == .task }
+        case .notes:
+            return items.filter { $0.type == .note }
         }
     }
 
@@ -151,6 +367,81 @@ struct OpenSpaceView: View {
         if let index = appState.timelineItems.firstIndex(where: { $0.linkedTask?.id == task.id }) {
             appState.timelineItems[index].linkedTask?.isCompleted = true
         }
+    }
+
+    private func checkForActiveMeeting() async {
+        // Request calendar access
+        do {
+            let granted = try await eventStore.requestFullAccessToEvents()
+            guard granted else { return }
+
+            // Find current meeting
+            let now = Date()
+            let predicate = eventStore.predicateForEvents(
+                withStart: now.addingTimeInterval(-3600), // 1 hour ago
+                end: now.addingTimeInterval(3600), // 1 hour from now
+                calendars: nil
+            )
+
+            let events = eventStore.events(matching: predicate)
+            currentMeeting = events.first { event in
+                event.startDate <= now && event.endDate > now
+            }
+        } catch {
+            // Calendar access denied or error
+            print("Calendar access error: \(error)")
+        }
+    }
+}
+
+// MARK: - Suggestion Chip
+
+struct SuggestionChip: View {
+    let icon: String
+    let text: String
+    var action: (() -> Void)?
+
+    var body: some View {
+        Button(action: { action?() }) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                Text(text)
+            }
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.accentColor.opacity(0.1), in: Capsule())
+            .foregroundStyle(Color.accentColor)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Capture Mode Button
+
+struct CaptureModeButton: View {
+    let mode: OpenSpaceView.CaptureMode
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: mode.icon)
+                Text(mode.rawValue)
+            }
+            .font(.caption.weight(isSelected ? .semibold : .regular))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background {
+                if isSelected {
+                    Capsule()
+                        .fill(Color.accentColor.opacity(0.15))
+                }
+            }
+            .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -181,8 +472,11 @@ enum OpenSpaceTab: String, CaseIterable {
 // MARK: - Timeline Item Row
 
 struct TimelineItemRow: View {
+    @EnvironmentObject private var appState: AppState
     let item: TimelineItemViewModel
     var onTaskComplete: ((TimelineTask) -> Void)?
+    var onSnooze: ((TimelineTask) -> Void)?
+    var onCreateTask: ((TimelineItemViewModel) -> Void)?
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -249,7 +543,11 @@ struct TimelineItemRow: View {
                         .foregroundStyle(task.isCompleted ? Color.secondary : Color.green)
                         .disabled(task.isCompleted)
 
-                        Button(action: {}) {
+                        Menu {
+                            Button("1 hour") { onSnooze?(task) }
+                            Button("Tomorrow morning") { onSnooze?(task) }
+                            Button("Next week") { onSnooze?(task) }
+                        } label: {
                             Label("Snooze", systemImage: "clock")
                         }
                         .buttonStyle(.plain)
@@ -262,14 +560,29 @@ struct TimelineItemRow: View {
                 // Note actions
                 if item.type == .note {
                     HStack(spacing: 12) {
-                        Button(action: {}) {
+                        Button(action: {
+                            // Show link to event picker
+                            // For now, this would open a sheet to select an event
+                        }) {
                             Label("Link to event", systemImage: "link")
                         }
-                        Button(action: {}) {
+                        Button(action: {
+                            onCreateTask?(item)
+                        }) {
                             Label("Create task", systemImage: "checklist")
                         }
-                        Button(action: {}) {
-                            Label("Move to space", systemImage: "folder")
+                        Menu {
+                            ForEach(appState.workspace.folders) { folder in
+                                Button(folder.name) {
+                                    // Move note to this folder
+                                }
+                            }
+                            Divider()
+                            Button("New Folder...") {
+                                // Create new folder with this note
+                            }
+                        } label: {
+                            Label("Move to folder", systemImage: "folder")
                         }
                     }
                     .font(.caption)
@@ -412,5 +725,11 @@ struct EventDetails {
     let attendees: [String]
     let notes: String?
     let color: Color
+}
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    static let focusQuickCapture = Notification.Name("focusQuickCapture")
 }
 

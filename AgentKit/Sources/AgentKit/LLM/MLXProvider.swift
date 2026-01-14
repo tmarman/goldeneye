@@ -438,7 +438,8 @@ public actor MLXProvider: LLMProvider {
     }
 
     /// List available MLX models in local cache
-    public static func cachedModels(in directory: URL = defaultModelDirectory) -> [URL] {
+    /// Returns model info for each cached model
+    public static func cachedModels(in directory: URL = defaultModelDirectory) -> [CachedModel] {
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: directory,
             includingPropertiesForKeys: [.isDirectoryKey]
@@ -446,14 +447,54 @@ public actor MLXProvider: LLMProvider {
             return []
         }
 
-        return contents.filter { url in
-            // MLX models are directories containing config.json
+        var models: [CachedModel] = []
+        
+        for url in contents {
+            // HuggingFace cache format: models--org--name
+            guard url.lastPathComponent.hasPrefix("models--") else { continue }
+            
             var isDir: ObjCBool = false
             FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
-            return isDir.boolValue && FileManager.default.fileExists(
-                atPath: url.appendingPathComponent("config.json").path
-            )
+            guard isDir.boolValue else { continue }
+            
+            // Find the latest snapshot
+            let snapshotsDir = url.appendingPathComponent("snapshots")
+            guard let snapshots = try? FileManager.default.contentsOfDirectory(
+                at: snapshotsDir,
+                includingPropertiesForKeys: [.contentModificationDateKey]
+            ), let latestSnapshot = snapshots.first else { continue }
+            
+            // Check if it has config.json (indicates a valid model)
+            let configPath = latestSnapshot.appendingPathComponent("config.json")
+            guard FileManager.default.fileExists(atPath: configPath.path) else { continue }
+            
+            // Parse the model ID from directory name
+            let parts = url.lastPathComponent.dropFirst("models--".count).replacingOccurrences(of: "--", with: "/")
+            
+            // Check if model weights are present (*.safetensors or *.bin)
+            let files = (try? FileManager.default.contentsOfDirectory(at: latestSnapshot, includingPropertiesForKeys: nil)) ?? []
+            let hasWeights = files.contains { 
+                $0.pathExtension == "safetensors" || $0.pathExtension == "bin" 
+            }
+            
+            // Calculate total size
+            var totalSize: UInt64 = 0
+            for file in files {
+                if let attrs = try? FileManager.default.attributesOfItem(atPath: file.path),
+                   let size = attrs[.size] as? UInt64 {
+                    totalSize += size
+                }
+            }
+            
+            models.append(CachedModel(
+                id: parts,
+                path: latestSnapshot,
+                hasWeights: hasWeights,
+                sizeBytes: totalSize
+            ))
         }
+        
+        return models
     }
 
     /// Default model cache directory
@@ -462,6 +503,22 @@ public actor MLXProvider: LLMProvider {
             .appendingPathComponent(".cache")
             .appendingPathComponent("huggingface")
             .appendingPathComponent("hub")
+    }
+    
+    /// Information about a cached model
+    public struct CachedModel: Sendable {
+        public let id: String
+        public let path: URL
+        public let hasWeights: Bool
+        public let sizeBytes: UInt64
+        
+        public var sizeFormatted: String {
+            MLXProvider.formatMemory(Int(sizeBytes))
+        }
+        
+        public var status: String {
+            hasWeights ? "Ready" : "Incomplete (missing weights)"
+        }
     }
 
     /// Recommended models from mlx-community
