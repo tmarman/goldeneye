@@ -222,12 +222,48 @@ import SharedWithYou
 @available(macOS 13.0, *)
 public actor SharedWithYouIntegration {
     private let highlightCenter = SWHighlightCenter()
+    private var knownHighlights: Set<String> = []
 
     /// Get all shared items
     public func getSharedItems() async throws -> [SharedItem] {
-        // SharedWithYou requires entitlements and proper setup
-        // This is a placeholder for the actual implementation
-        return []
+        // Get highlights from the SharedWithYou framework
+        let highlights = highlightCenter.highlights
+
+        var items: [SharedItem] = []
+
+        for highlight in highlights {
+            // Extract URL from highlight
+            let url = highlight.url
+
+            // Use persistent identifier as ID
+            let id = String(describing: highlight.identifier)
+
+            let item = SharedItem(
+                id: id,
+                url: url,
+                title: nil, // Will be fetched from URL
+                sharedBy: nil, // Attribution API varies by macOS version
+                sourceApp: nil,
+                dateShared: Date() // Timestamp availability varies
+            )
+
+            items.append(item)
+        }
+
+        return items
+    }
+
+    /// Get new shared items since last check
+    public func getNewSharedItems() async throws -> [SharedItem] {
+        let allItems = try await getSharedItems()
+        let newItems = allItems.filter { !knownHighlights.contains($0.id) }
+
+        // Update known items
+        for item in allItems {
+            knownHighlights.insert(item.id)
+        }
+
+        return newItems
     }
 }
 

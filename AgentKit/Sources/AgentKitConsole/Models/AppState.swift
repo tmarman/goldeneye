@@ -3,6 +3,10 @@ import Combine
 import Foundation
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#endif
+
 /// Global application state for the Console app
 @MainActor
 public final class AppState: ObservableObject {
@@ -40,6 +44,14 @@ public final class AppState: ObservableObject {
 
     /// MCP connection manager - handles connections to MCP servers
     let mcpManager: MCPManager
+
+    /// Memory store - RAG-based retrieval across all content
+    var memoryStore: MemoryStore?
+
+    #if os(macOS)
+    /// Content sync service - syncs Reading List and Shared with You
+    var contentSyncService: ContentSyncService?
+    #endif
 
     /// Current spaces loaded from SpaceManager (for UI binding)
     @Published var spaces: [SpaceViewModel] = []
@@ -168,6 +180,26 @@ public final class AppState: ObservableObject {
 
         // Load content in background
         Task {
+            // Initialize memory store properly
+            do {
+                let store = try await MemoryStore()
+                await MainActor.run {
+                    self.memoryStore = store
+                }
+
+                #if os(macOS)
+                // Initialize ContentSyncService with the memory store
+                let syncService = ContentSyncService(memoryStore: store)
+                await MainActor.run {
+                    self.contentSyncService = syncService
+                }
+                #endif
+
+                print("✅ Memory Store and Content Sync initialized")
+            } catch {
+                print("⚠️ Failed to initialize MemoryStore: \(error)")
+            }
+
             await loadSpaces()
             await loadDocuments()
 
@@ -175,6 +207,9 @@ public final class AppState: ObservableObject {
             if UserDefaults.standard.bool(forKey: "autoConnectLocal") {
                 await autoConnectToServer()
             }
+
+            // Start background sync for Reading List and Shared with You
+            await startContentSync()
         }
 
         // Keep sample conversation for development
@@ -227,6 +262,20 @@ public final class AppState: ObservableObject {
             // Server is running externally
             await connectToLocalAgent()
         }
+    }
+
+    /// Start background content sync service
+    private func startContentSync() async {
+        #if os(macOS)
+        guard let contentSync = contentSyncService else {
+            print("⚠️ ContentSyncService not initialized - skipping background sync")
+            return
+        }
+
+        // Start periodic sync every 5 minutes
+        await contentSync.startPeriodicSync(interval: 300)
+        print("📚 Started Reading List & Shared with You sync service")
+        #endif
     }
 
     private func setupSampleConversation() {
@@ -961,6 +1010,49 @@ public final class AppState: ObservableObject {
             }
 
             allItems.append(contentsOf: calendarItems)
+        }
+
+        // Load synced content from MemoryStore (Reading List & Shared with You)
+        if let memoryStore = memoryStore {
+            // Get Reading List items
+            let readingListItems = await memoryStore.getReadingListItems()
+            for item in readingListItems.prefix(20) {  // Limit to recent 20 items
+                if case .readingList(let urlString, let title) = item.source {
+                    let timelineItem = TimelineItemViewModel(
+                        type: .note,
+                        title: title ?? urlString,
+                        subtitle: "From Reading List",
+                        timestamp: item.createdAt,
+                        icon: "book",
+                        iconColor: .orange
+                    )
+                    allItems.append(timelineItem)
+                }
+            }
+
+            // Get Shared with You items
+            let sharedItems = await memoryStore.getSharedItems()
+            for item in sharedItems.prefix(20) {  // Limit to recent 20 items
+                if case .shared(let sourceApp, let sharedBy) = item.source {
+                    let subtitle = if let app = sourceApp {
+                        "Shared via \(app)"
+                    } else if let by = sharedBy {
+                        "Shared by \(by)"
+                    } else {
+                        "Shared with You"
+                    }
+
+                    let timelineItem = TimelineItemViewModel(
+                        type: .note,
+                        title: item.metadata.title ?? "Shared content",
+                        subtitle: subtitle,
+                        timestamp: item.createdAt,
+                        icon: "person.2",
+                        iconColor: .purple
+                    )
+                    allItems.append(timelineItem)
+                }
+            }
         }
 
         // Sort by timestamp

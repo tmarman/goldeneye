@@ -222,6 +222,26 @@ public actor MemoryStore {
         }
     }
 
+    /// Get all items from Reading List
+    public func getReadingListItems() async -> [MemoryItem] {
+        return itemMetadata.values.filter { item in
+            if case .readingList = item.source {
+                return true
+            }
+            return false
+        }.sorted(by: { $0.createdAt > $1.createdAt })
+    }
+
+    /// Get all items from Shared with You
+    public func getSharedItems() async -> [MemoryItem] {
+        return itemMetadata.values.filter { item in
+            if case .shared = item.source {
+                return true
+            }
+            return false
+        }.sorted(by: { $0.createdAt > $1.createdAt })
+    }
+
     // MARK: - Persistence
 
     private func loadMetadata() async {
