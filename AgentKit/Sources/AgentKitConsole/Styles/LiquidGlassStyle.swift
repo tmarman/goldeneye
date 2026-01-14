@@ -1028,9 +1028,9 @@ struct DateDisplay: View {
     }
 }
 
-// MARK: - Craft-Style Inline Formatting Toolbar
+// MARK: - Inline Formatting Toolbar
 
-/// A floating inline formatting toolbar that appears on text selection (Craft-like)
+/// A floating inline formatting toolbar that appears on text selection
 struct InlineFormattingToolbar: View {
     let onBold: () -> Void
     let onItalic: () -> Void
@@ -1103,10 +1103,10 @@ private struct ToolbarDivider: View {
     }
 }
 
-// MARK: - Enhanced Block Handle (Craft-style)
+// MARK: - Block Drag Handle
 
-/// A Craft-style drag handle with grip dots pattern
-struct CraftBlockHandle: View {
+/// A drag handle with grip dots pattern for reordering blocks
+struct BlockDragHandle: View {
     let isVisible: Bool
     @State private var isHovered = false
     @State private var isDragging = false
@@ -1138,248 +1138,6 @@ struct CraftBlockHandle: View {
             return .primary.opacity(0.5)
         }
         return .secondary.opacity(0.4)
-    }
-}
-
-// MARK: - Craft-Style Add Block Button
-
-/// A minimal "+" button that appears between blocks on hover (Craft-style)
-struct CraftAddBlockButton: View {
-    let action: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 0) {
-                // Left line
-                Rectangle()
-                    .fill(Color.primary.opacity(isHovered ? 0.15 : 0.08))
-                    .frame(height: 1)
-
-                // Center plus button
-                ZStack {
-                    Circle()
-                        .fill(isHovered ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.05))
-                        .frame(width: 20, height: 20)
-
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(isHovered ? Color.accentColor : .secondary)
-                }
-                .scaleEffect(isHovered ? 1.1 : 1.0)
-
-                // Right line
-                Rectangle()
-                    .fill(Color.primary.opacity(isHovered ? 0.15 : 0.08))
-                    .frame(height: 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .frame(height: 20)
-        .opacity(isHovered ? 1 : 0.5)
-        .animation(.liquidGlassQuick, value: isHovered)
-        .onHover { isHovered = $0 }
-    }
-}
-
-// MARK: - Craft-Style Block Type Picker
-
-/// A more visual block type picker with icons and descriptions (like Craft's "/" menu)
-struct CraftBlockTypePicker: View {
-    let query: String
-    let onSelect: (CraftBlockType) -> Void
-    let onDismiss: () -> Void
-    @State private var selectedIndex = 0
-
-    private var filteredTypes: [CraftBlockType] {
-        if query.isEmpty {
-            return CraftBlockType.allCases
-        }
-        return CraftBlockType.allCases.filter { type in
-            type.displayName.localizedCaseInsensitiveContains(query) ||
-            type.keywords.contains { $0.localizedCaseInsensitiveContains(query) }
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack {
-                Image(systemName: "sparkles")
-                    .font(.caption)
-                    .foregroundStyle(Color.accentColor)
-                Text("Turn into")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("esc to close")
-                    .font(.caption2)
-                    .foregroundStyle(.quaternary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-
-            Divider()
-                .opacity(0.5)
-
-            if filteredTypes.isEmpty {
-                // Empty state
-                VStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.title3)
-                        .foregroundStyle(.quaternary)
-                    Text("No blocks found")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
-            } else {
-                // Block types grid
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
-                        ForEach(Array(filteredTypes.enumerated()), id: \.element) { index, type in
-                            BlockTypeCard(
-                                type: type,
-                                isSelected: index == selectedIndex,
-                                action: { onSelect(type) }
-                            )
-                        }
-                    }
-                    .padding(8)
-                }
-                .frame(maxHeight: 280)
-            }
-        }
-        .frame(width: 320)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.2), radius: 20, y: 8)
-    }
-}
-
-/// Individual block type card in the picker
-private struct BlockTypeCard: View {
-    let type: CraftBlockType
-    let isSelected: Bool
-    let action: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(type.iconBackgroundColor.opacity(0.15))
-                        .frame(width: 36, height: 36)
-
-                    Image(systemName: type.icon)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(type.iconBackgroundColor)
-                }
-
-                Text(type.displayName)
-                    .font(.caption)
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill((isHovered || isSelected) ? Color.accentColor.opacity(0.1) : .clear)
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(isSelected ? Color.accentColor.opacity(0.5) : .clear, lineWidth: 1.5)
-            )
-        }
-        .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
-    }
-}
-
-/// Block types for the Craft-style picker
-enum CraftBlockType: String, CaseIterable, Identifiable {
-    case text, heading1, heading2, heading3
-    case bulletList, numberedList, todo, toggle
-    case code, quote, callout, divider
-    case image, agent
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .text: return "Text"
-        case .heading1: return "Heading 1"
-        case .heading2: return "Heading 2"
-        case .heading3: return "Heading 3"
-        case .bulletList: return "Bullet List"
-        case .numberedList: return "Numbered"
-        case .todo: return "To-do"
-        case .toggle: return "Toggle"
-        case .code: return "Code"
-        case .quote: return "Quote"
-        case .callout: return "Callout"
-        case .divider: return "Divider"
-        case .image: return "Image"
-        case .agent: return "Agent"
-        }
-    }
-
-    var icon: String {
-        switch self {
-        case .text: return "text.alignleft"
-        case .heading1: return "textformat.size.larger"
-        case .heading2: return "textformat.size"
-        case .heading3: return "textformat.size.smaller"
-        case .bulletList: return "list.bullet"
-        case .numberedList: return "list.number"
-        case .todo: return "checkmark.square"
-        case .toggle: return "chevron.right.circle"
-        case .code: return "chevron.left.forwardslash.chevron.right"
-        case .quote: return "text.quote"
-        case .callout: return "exclamationmark.circle"
-        case .divider: return "minus"
-        case .image: return "photo"
-        case .agent: return "sparkles"
-        }
-    }
-
-    var iconBackgroundColor: Color {
-        switch self {
-        case .text, .heading1, .heading2, .heading3: return .blue
-        case .bulletList, .numberedList, .todo: return .green
-        case .toggle: return .orange
-        case .code: return .orange
-        case .quote: return .purple
-        case .callout: return .yellow
-        case .divider: return .secondary
-        case .image: return .pink
-        case .agent: return EditorTokens.Colors.agentAccent
-        }
-    }
-
-    var keywords: [String] {
-        switch self {
-        case .text: return ["text", "paragraph", "p"]
-        case .heading1: return ["h1", "heading", "title"]
-        case .heading2: return ["h2", "subheading"]
-        case .heading3: return ["h3"]
-        case .bulletList: return ["bullet", "list", "ul", "-"]
-        case .numberedList: return ["number", "ol", "1."]
-        case .todo: return ["todo", "task", "checkbox", "[]"]
-        case .toggle: return ["toggle", "collapse", "expand"]
-        case .code: return ["code", "```", "programming"]
-        case .quote: return ["quote", "blockquote", ">"]
-        case .callout: return ["callout", "note", "tip", "warning"]
-        case .divider: return ["divider", "hr", "---", "line"]
-        case .image: return ["image", "img", "photo", "picture"]
-        case .agent: return ["agent", "ai", "sparkle", "assistant"]
-        }
     }
 }
 

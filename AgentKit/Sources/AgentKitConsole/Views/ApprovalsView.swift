@@ -238,16 +238,8 @@ struct ApprovalDetailView: View {
                         .keyboardShortcut(.return, modifiers: .command)
                     }
 
-                    // Quick approve options
+                    // Quick approve option
                     HStack {
-                        Button("Approve + Remember") {
-                            // TODO: Approve and add to allow list
-                            Task { await appState.approveRequest(approval) }
-                        }
-                        .font(.caption)
-
-                        Spacer()
-
                         Button("Approve All Similar") {
                             // Approve all with same tool
                             Task {
@@ -257,6 +249,8 @@ struct ApprovalDetailView: View {
                             }
                         }
                         .font(.caption)
+
+                        Spacer()
                     }
                     .foregroundStyle(.secondary)
                 }

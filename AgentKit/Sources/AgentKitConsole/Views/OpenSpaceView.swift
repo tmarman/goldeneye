@@ -181,6 +181,9 @@ struct OpenSpaceView: View {
             .foregroundStyle(.red)
         }
         .buttonStyle(.plain)
+        .disabled(true)
+        .opacity(0.5)
+        .help("Voice transcription coming soon")
     }
 
     @ViewBuilder
@@ -601,35 +604,9 @@ struct TimelineItemRow: View {
                 // Enhanced note actions
                 if item.type == .note {
                     HStack(spacing: 8) {
-                        ActionButton(icon: "link", label: "Link to event") {
-                            // Show link to event picker
-                        }
                         ActionButton(icon: "checklist", label: "Create task") {
                             onCreateTask?(item)
                         }
-                        Menu {
-                            ForEach(appState.workspace.folders) { folder in
-                                Button(folder.name) {
-                                    // Move note to this folder
-                                }
-                            }
-                            Divider()
-                            Button("New Folder...") {
-                                // Create new folder with this note
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "folder")
-                                    .font(.system(size: 12))
-                                Text("Move")
-                            }
-                            .font(.caption.weight(.medium))
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Color.secondary.opacity(0.1), in: Capsule())
-                            .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
                     }
                     .padding(.top, 4)
                 }

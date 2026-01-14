@@ -1,90 +1,40 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Settings Detail View (for main content area)
+// MARK: - Settings Sidebar Item
 
-struct SettingsDetailView: View {
-    @EnvironmentObject private var appState: AppState
-    @State private var selectedCategory: SettingsCategory = .general
+struct SettingsSidebarItem: View {
+    let category: SettingsCategory
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Top bar with back button and category picker
-            HStack {
-                Button(action: { appState.selectedSidebarItem = .openSpace }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
-                        Text("Back")
-                    }
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: category.icon)
+                    .font(.body)
+                    .foregroundStyle(isSelected ? .white : .primary)
+                    .frame(width: 20)
 
-                Spacer()
-
-                // Category picker as segmented control
-                Picker("Category", selection: $selectedCategory) {
-                    ForEach(SettingsCategory.allCases) { category in
-                        Label(category.label, systemImage: category.icon)
-                            .tag(category)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(maxWidth: 500)
+                Text(category.label)
+                    .font(.body)
+                    .foregroundStyle(isSelected ? .white : .primary)
 
                 Spacer()
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(Color(nsColor: .windowBackgroundColor))
-
-            Divider()
-
-            // Settings content
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    // Header
-                    HStack {
-                        Image(systemName: selectedCategory.icon)
-                            .font(.title)
-                            .foregroundStyle(.secondary)
-                        Text(selectedCategory.label)
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
-                    }
-                    .padding(.bottom, 20)
-
-                    // Content
-                    selectedCategoryView
-                        .padding(.bottom, 24)
-                }
-                .frame(maxWidth: 600, alignment: .leading)
-                .padding(.horizontal, 40)
-                .padding(.top, 32)
-                .frame(maxWidth: .infinity, alignment: .center)
-            }
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.3))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.accentColor : (isHovered ? Color.primary.opacity(0.06) : .clear))
+            )
+            .contentShape(Rectangle())
         }
-        .navigationTitle("Settings")
-    }
-
-    @ViewBuilder
-    private var selectedCategoryView: some View {
-        switch selectedCategory {
-        case .general:
-            GeneralSettingsContent()
-        case .llm:
-            LLMSettingsContent()
-        case .server:
-            ServerSettingsContent()
-        case .extensions:
-            ExtensionsSettingsContent()
-        case .approvals:
-            ApprovalSettingsContent()
-        case .advanced:
-            AdvancedSettingsContent()
-        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.15), value: isHovered)
+        .animation(.easeOut(duration: 0.15), value: isSelected)
     }
 }
 
@@ -119,6 +69,97 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .extensions: "puzzlepiece.extension"
         case .approvals: "checkmark.shield"
         case .advanced: "gearshape.2"
+        }
+    }
+}
+
+// MARK: - Settings Detail View (for main content area)
+
+struct SettingsDetailView: View {
+    @EnvironmentObject private var appState: AppState
+    @State private var selectedCategory: SettingsCategory = .general
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Clean header with title and close button
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Settings")
+                        .font(.system(size: 28, weight: .bold))
+                    Text(selectedCategory.label)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                // Close button (Esc or click)
+                Button(action: { appState.selectedSidebarItem = .openSpace }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                        .symbolRenderingMode(.hierarchical)
+                }
+                .buttonStyle(.plain)
+                .help("Close Settings (Esc)")
+                .keyboardShortcut(.escape)
+            }
+            .padding(.horizontal, 32)
+            .padding(.vertical, 24)
+            .background(.ultraThinMaterial)
+
+            Divider()
+
+            HStack(spacing: 0) {
+                // Sidebar navigation
+                ScrollView {
+                    VStack(spacing: 4) {
+                        ForEach(SettingsCategory.allCases) { category in
+                            SettingsSidebarItem(
+                                category: category,
+                                isSelected: selectedCategory == category,
+                                action: { selectedCategory = category }
+                            )
+                        }
+                    }
+                    .padding(12)
+                }
+                .frame(width: 200)
+                .background(Color(nsColor: .windowBackgroundColor))
+
+                Divider()
+
+                // Settings content
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        selectedCategoryView
+                    }
+                    .frame(maxWidth: 700, alignment: .leading)
+                    .padding(32)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+                .background(Color(nsColor: .textBackgroundColor).opacity(0.3))
+            }
+        }
+        .navigationTitle("Settings")
+    }
+
+    @ViewBuilder
+    private var selectedCategoryView: some View {
+        switch selectedCategory {
+        case .general:
+            GeneralSettingsContent()
+        case .llm:
+            LLMSettingsContent()
+        case .server:
+            ServerSettingsContent()
+        case .extensions:
+            ExtensionsSettingsContent()
+        case .approvals:
+            ApprovalSettingsContent()
+        case .advanced:
+            AdvancedSettingsContent()
         }
     }
 }
