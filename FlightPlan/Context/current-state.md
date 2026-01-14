@@ -1,44 +1,73 @@
 # Current Project State
 
-**Last Updated**: 2025-12-31
-**Phase**: Planning → Implementation
+**Last Updated**: 2026-01-14
+**Phase**: Implementation → Demo Ready
 
 ## Status Summary
 
-Research complete. Ready to build V1 on Mac Studio M3 Ultra.
-
-Key research completed:
-- ACE context management patterns
-- A2A protocol specification (full schema)
-- Swift server ecosystem (Hummingbird)
-- MLX local inference (~230 tok/s on M2 Ultra)
+AgentKitConsole is now demo-ready with full UI implementation. Core features working:
+- A2A protocol integration with local server
+- Agent visualization and activity monitoring
+- Approval/Decision workflows
+- Document editor with block-based editing
+- OpenSpace capture with EventKit integration
 
 ## Active Work
 
 | Flight | Status | Description |
 |--------|--------|-------------|
-| **F001** | **Active** | V1 Local Runtime (Mac Studio) |
-| F002 | Backlog | A2A Protocol (integrated into F001) |
+| **F001** | **Complete** | V1 Local Runtime (Mac Studio) |
+| **F002** | **Complete** | Console UI Development |
 | F003 | Complete | ACE Research |
 | F004 | Backlog | Claude SDK Port |
 | F005 | Backlog | Developer SDK |
 | F006 | Backlog | Docs & Landing Page |
 
-## V1 Target
+## V1 Implementation Complete
 
 **Hardware**: Mac Studio M3 Ultra (192GB)
-**LLM**: MLX with 70B model (Qwen/Llama)
+**LLM**: MLX with configurable models via Ollama
 **Server**: Hummingbird HTTP with A2A endpoints
-**Storage**: Local files (`~/AgentKit/`)
+**Storage**: Local files + Git-backed Spaces
 
-## Current Focus
+## Recent Session (2026-01-14)
 
-Building core runtime:
-1. Swift Package structure
-2. Agent protocol + loop
-3. MLX integration
-4. Basic tools (Read, Write, Bash)
-5. A2A HTTP endpoints
+Completed demo polish:
+1. ✅ Wired up approval flow (approve/deny buttons → AppState)
+2. ✅ Decisions flow already complete with full CRUD
+3. ✅ Added "Getting Started" onboarding card
+4. ✅ Agent activity visualization with animated status
+5. ✅ Agent conversations view
+
+## Console UI Features
+
+### Implemented
+- **Dashboard**: Status cards, active agents, conversations, getting started
+- **OpenSpace**: Post-it style capture, EventKit meeting detection, capture modes
+- **Documents**: Block-based editor (Craft-style), save indicator, block actions
+- **Decisions**: Full workflow with filtering, comments, history
+- **Approvals**: Real-time approval/deny with A2A backend
+- **Agents**: Activity visualization, conversation display
+- **Settings**: Server management, Ollama model selection
+
+### Architecture
+```
+AgentKitConsole/
+├── AgentKitConsoleApp.swift    # App entry with Window + MenuBarExtra
+├── Models/
+│   ├── AppState.swift          # Global state, A2A client, managers
+│   └── AgentTemplates.swift    # 18 agent templates
+├── Services/
+│   ├── ServerManager.swift     # Local server lifecycle
+│   └── CalendarService.swift   # EventKit integration
+└── Views/
+    ├── ContentView.swift       # Navigation, sidebar, detail router
+    ├── DashboardView.swift     # Status, agents, conversations
+    ├── OpenSpaceView.swift     # Timeline, capture card
+    ├── DocumentEditorView.swift # Block-based editor
+    ├── DecisionCardView.swift  # Decision workflow
+    └── ... (12+ view files)
+```
 
 ## Key Decisions Made
 
@@ -46,51 +75,44 @@ Building core runtime:
 |----------|--------|
 | LLM Framework | MLX (fastest, native Swift) |
 | HTTP Server | Hummingbird (minimal, SwiftNIO) |
-| Storage | Local files (simple for v1) |
-| Protocol | A2A (future interop) |
-| Context Pattern | ACE (incremental, not aggressive compaction) |
+| Storage | Git-backed Spaces (version control) |
+| Protocol | A2A (agent-to-agent interop) |
+| Context Pattern | ACE (incremental compaction) |
+| UI Framework | SwiftUI with AppKit integration |
 
 ## Repository State
 
 ```
-/Users/tim/dev/agents/
-├── input.md                    # Original vision notes
-└── FlightPlan/
-    ├── Manifest/
-    │   └── business.json       # Project identity
-    ├── Mission/
-    │   ├── Active/
-    │   │   └── M001-foundation.md
-    │   └── Exploring/
-    │       └── M002-apple-integration.md
-    ├── Flight/
-    │   └── Backlog/
-    │       ├── F001-core-runtime.md
-    │       ├── F002-a2a-protocol.md
-    │       ├── F003-ace-research.md
-    │       ├── F004-claude-sdk-port.md
-    │       ├── F005-developer-sdk.md
-    │       └── F006-docs-landing.md
-    ├── Charts/
-    │   ├── Business/
-    │   │   └── positioning.md
-    │   ├── Technical/
-    │   │   ├── architecture-overview.md
-    │   │   └── swift-patterns.md
-    │   └── Setup/
-    │       └── getting-started.md
-    ├── Crew/
-    │   └── Learnings/
-    │       ├── Corrections/
-    │       └── Patterns/
-    └── Context/
-        └── current-state.md    # This file
+/Users/tim/dev/agents/repos/goldeneye/
+├── README.md
+├── FlightPlan/           # Planning & documentation
+│   ├── Context/
+│   │   └── current-state.md    # This file
+│   ├── Flight/
+│   │   └── Active/
+│   │       ├── F001-v1-local-runtime.md
+│   │       └── F002-console-ui-development.md
+│   └── Charts/           # Technical specs
+└── AgentKit/             # Swift Package
+    ├── Package.swift
+    └── Sources/
+        ├── AgentKit/           # Core library
+        ├── AgentKitConsole/    # macOS app
+        ├── AgentKitCLI/        # Command line
+        └── AgentKitServer/     # A2A server
 ```
+
+## Next Steps
+
+1. **Testing**: Run full demo flow with live agents
+2. **Polish**: Address any UX issues found in testing
+3. **Documentation**: Update getting-started guide
+4. **F004**: Consider Claude SDK port for enhanced capabilities
 
 ## Notes for Future Sessions
 
 When picking up this project:
-1. Read `Manifest/business.json` for strategic context
-2. Check `Context/current-state.md` (this file) for where we left off
-3. Look at `Mission/Active/` for current priorities
-4. Pick a Flight from `Flight/Backlog/` and move to `Flight/Active/`
+1. Run `swift build` in AgentKit/ to verify everything compiles
+2. Run `swift run AgentKitConsole` to launch the app
+3. Check this file for recent progress
+4. Look at `Flight/Active/` for current priorities
