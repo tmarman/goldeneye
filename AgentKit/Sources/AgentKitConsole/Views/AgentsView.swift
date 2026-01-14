@@ -55,11 +55,7 @@ struct AgentsView: View {
             if let agent = selectedAgent {
                 AgentDetailView(agent: agent)
             } else {
-                EmptyStateView(
-                    icon: "point.3.connected.trianglepath.dotted",
-                    title: "No Agent Selected",
-                    message: "Select an agent to view details and capabilities"
-                )
+                agentEmptyState
             }
         }
         .navigationTitle("Agents")
@@ -82,6 +78,47 @@ struct AgentsView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var agentEmptyState: some View {
+        VStack(spacing: 24) {
+            VStack(spacing: 12) {
+                Image(systemName: "point.3.connected.trianglepath.dotted")
+                    .font(.system(size: 64))
+                    .foregroundStyle(.secondary)
+
+                Text("No Agent Selected")
+                    .font(.title2.bold())
+
+                Text("Select an agent from the sidebar or connect a new one to get started")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 400)
+            }
+
+            HStack(spacing: 12) {
+                Button {
+                    isScanning = true
+                    Task {
+                        try? await Task.sleep(for: .seconds(3))
+                        isScanning = false
+                    }
+                } label: {
+                    Label("Scan Network", systemImage: "antenna.radiowaves.left.and.right")
+                }
+                .buttonStyle(.bordered)
+
+                Button {
+                    appState.showConnectSheet = true
+                } label: {
+                    Label("Connect Agent", systemImage: "plus.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
