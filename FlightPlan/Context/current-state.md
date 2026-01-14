@@ -40,6 +40,7 @@ AgentKitConsole is now demo-ready with full UI implementation. Core features wor
 5. ✅ Display synced Reading List and Shared with You items in OpenSpace timeline
 6. ✅ Periodic background sync (every 5 minutes) with error tracking
 7. ✅ All synced content indexed for RAG retrieval
+8. ✅ Implemented vector search with embeddings (SimpleEmbeddingProvider using TF-IDF)
 
 **Session 4 - Settings Polish:**
 1. ✅ Added Extensions tab to ⌘, Settings preferences window
@@ -88,8 +89,9 @@ AgentKitConsole is now demo-ready with full UI implementation. Core features wor
 ```
 AgentKit/
 ├── Memory/                     # RAG system
-│   ├── MemoryStore.swift       # VecturaKit vector DB
+│   ├── MemoryStore.swift       # Vector search with embeddings
 │   ├── MemoryTypes.swift       # Items, sources, sync
+│   ├── EmbeddingProvider.swift # Vector embeddings (TF-IDF placeholder)
 │   ├── ContentChunker.swift    # Document chunking
 │   ├── MemorySyncManager.swift # Master server sync
 │   ├── ContentSyncService.swift # Background sync coordinator
@@ -126,7 +128,7 @@ AgentKitConsole/
 | Protocol | A2A (agent-to-agent interop) |
 | Context Pattern | ACE (incremental compaction) |
 | UI Framework | SwiftUI with AppKit integration |
-| Vector Database | VecturaKit (on-device, MLX embeddings) |
+| Vector Search | Custom implementation with TF-IDF embeddings (upgradeable to MLX) |
 | Agent Config | Chat-based (Custom GPT pattern) |
 
 ## Repository State
@@ -154,12 +156,15 @@ AgentKitConsole/
 ## Next Steps
 
 1. **Testing**: Run full demo flow with live agents
-2. **VecturaKit Integration**: Test VecturaKit API and enable proper vector search
-3. **Integration Testing**:
+2. **Integration Testing**:
    - Test memory indexing with real documents
    - Test Safari Reading List import flow
+   - Test vector search with sample queries
    - Test Extensions discovery with Shortcuts
    - Test Agent Configurator chat flow
+3. **Embedding Model Upgrade** (optional future enhancement):
+   - Replace SimpleEmbeddingProvider with MLX-based embeddings for better semantic search
+   - Options: sentence-transformers via MLX, Ollama embeddings API, or custom trained model
 4. **Feature Ideas** (future):
    - Agent wrapper for Claude Code/Codex/Gemini as orchestration tools
    - Memory sync with master server (P2P/mesh)
