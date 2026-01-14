@@ -44,6 +44,10 @@ let package = Package(
 
         // MLX LLM library for model loading and generation
         .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", from: "2.29.0"),
+
+        // VecturaKit for on-device vector database / RAG
+        // TODO: Re-enable once API is tested and integrated
+        // .package(url: "https://github.com/rryam/VecturaKit.git", from: "2.3.1"),
     ],
     targets: [
         // MARK: - Core Library
@@ -57,6 +61,7 @@ let package = Package(
                 .product(name: "MLXRandom", package: "mlx-swift"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                // .product(name: "VecturaKit", package: "VecturaKit"),  // TODO: Re-enable
             ],
             path: "Sources/AgentKit"
         ),

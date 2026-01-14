@@ -430,16 +430,30 @@ struct BlockHandle: View {
     let onDuplicate: () -> Void
     let onTurnInto: (BlockType) -> Void
 
-    var body: some View {
-        HStack(spacing: 2) {
-            // Add button
-            HandleButton(icon: "plus", action: onAdd)
+    @State private var isHovered = false
 
-            // Drag handle with menu
+    var body: some View {
+        HStack(spacing: 4) {
+            // Add button - appears on hover
+            Button(action: onAdd) {
+                Image(systemName: "plus")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isHovered ? Color.accentColor : .secondary)
+                    .frame(width: 18, height: 18)
+                    .background(
+                        Circle()
+                            .fill(isHovered ? Color.accentColor.opacity(0.1) : .clear)
+                    )
+            }
+            .buttonStyle(.plain)
+            .opacity(isHovered ? 1 : 0.6)
+
+            // Drag handle with context menu
             Menu {
                 Button(action: onDelete) {
                     Label("Delete", systemImage: "trash")
                 }
+                .keyboardShortcut(.delete, modifiers: [])
 
                 Divider()
 
@@ -447,11 +461,13 @@ struct BlockHandle: View {
                     Button(action: onMoveUp) {
                         Label("Move Up", systemImage: "arrow.up")
                     }
+                    .keyboardShortcut(.upArrow, modifiers: [.option])
                 }
                 if let onMoveDown {
                     Button(action: onMoveDown) {
                         Label("Move Down", systemImage: "arrow.down")
                     }
+                    .keyboardShortcut(.downArrow, modifiers: [.option])
                 }
 
                 Divider()
@@ -459,6 +475,7 @@ struct BlockHandle: View {
                 Button(action: onDuplicate) {
                     Label("Duplicate", systemImage: "plus.square.on.square")
                 }
+                .keyboardShortcut("d", modifiers: [.command])
 
                 // Turn into submenu
                 Menu {
@@ -471,17 +488,29 @@ struct BlockHandle: View {
                     Label("Turn into...", systemImage: "arrow.triangle.swap")
                 }
             } label: {
-                Image(systemName: "line.3.horizontal")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 18, height: 18)
-                    .contentShape(Rectangle())
+                // Craft-style grip dots
+                VStack(spacing: 2) {
+                    ForEach(0..<3, id: \.self) { _ in
+                        HStack(spacing: 2) {
+                            Circle()
+                                .fill(isHovered ? Color.primary.opacity(0.5) : Color.secondary.opacity(0.35))
+                                .frame(width: 3, height: 3)
+                            Circle()
+                                .fill(isHovered ? Color.primary.opacity(0.5) : Color.secondary.opacity(0.35))
+                                .frame(width: 3, height: 3)
+                        }
+                    }
+                }
+                .frame(width: 16, height: 18)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
         }
         .frame(width: EditorTokens.Spacing.handleWidth)
         .opacity(isVisible ? 1 : 0)
         .animation(.liquidGlassQuick, value: isVisible)
+        .animation(.liquidGlassQuick, value: isHovered)
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -901,9 +930,15 @@ struct ImageBlockView: View {
                         }
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 8))
+                .contextMenu {
+                    Button("Replace Image...", action: pickImage)
+                    Button("Remove Image", role: .destructive) {
+                        block.url = nil
+                    }
+                }
             } else {
                 // Placeholder for adding image
-                Button(action: { /* TODO: Image picker */ }) {
+                Button(action: pickImage) {
                     RoundedRectangle(cornerRadius: 8)
                         .fill(Color(.controlBackgroundColor))
                         .aspectRatio(16/9, contentMode: .fit)
@@ -911,7 +946,7 @@ struct ImageBlockView: View {
                             VStack(spacing: 8) {
                                 Image(systemName: "photo")
                                     .font(.largeTitle)
-                                Text("Add Image")
+                                Text("Click to add image")
                             }
                             .foregroundStyle(.secondary)
                         }
@@ -924,6 +959,17 @@ struct ImageBlockView: View {
                 .textFieldStyle(.plain)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private func pickImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        if panel.runModal() == .OK, let url = panel.url {
+            block.url = url
         }
     }
 
@@ -1016,6 +1062,7 @@ struct AddBlockButton: View {
     let onAdd: () -> Void      // Click to add text block immediately
     let onShowMenu: () -> Void // Right-click for other block types
     @State private var isHovered = false
+    @State private var showQuickMenu = false
 
     // Convenience init for simple case
     init(action: @escaping () -> Void) {
@@ -1029,19 +1076,64 @@ struct AddBlockButton: View {
     }
 
     var body: some View {
-        Button(action: onAdd) {
-            HStack(spacing: 8) {
-                Image(systemName: "plus")
-                Text("Add text")
+        HStack(spacing: 0) {
+            // Left line
+            Rectangle()
+                .fill(Color.primary.opacity(isHovered ? 0.12 : 0.06))
+                .frame(height: 1)
+
+            // Center button group
+            HStack(spacing: 4) {
+                // Main add button
+                Button(action: onAdd) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Add block")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .foregroundStyle(isHovered ? Color.accentColor : .secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(isHovered ? Color.accentColor.opacity(0.1) : Color.primary.opacity(0.04))
+                    )
+                }
+                .buttonStyle(.plain)
+
+                // Quick block type menu
+                Menu {
+                    ForEach(BlockType.allCases.prefix(6), id: \.self) { type in
+                        Button(action: { onShowMenu() }) {
+                            Label(type.displayName, systemImage: type.icon)
+                        }
+                    }
+                    Divider()
+                    Button(action: onShowMenu) {
+                        Label("More blocks...", systemImage: "ellipsis.circle")
+                    }
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(isHovered ? .secondary : .tertiary)
+                        .frame(width: 20, height: 20)
+                        .background(
+                            Circle()
+                                .fill(isHovered ? Color.primary.opacity(0.05) : .clear)
+                        )
+                }
+                .buttonStyle(.plain)
+                .opacity(isHovered ? 1 : 0.5)
             }
-            .font(.subheadline)
-            .foregroundStyle(isHovered ? .primary : .secondary)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(isHovered ? Color(.controlBackgroundColor).opacity(0.8) : Color(.controlBackgroundColor).opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+
+            // Right line
+            Rectangle()
+                .fill(Color.primary.opacity(isHovered ? 0.12 : 0.06))
+                .frame(height: 1)
         }
-        .buttonStyle(.plain)
+        .frame(height: 32)
+        .animation(.liquidGlassQuick, value: isHovered)
         .onHover { isHovered = $0 }
     }
 }
@@ -1104,6 +1196,7 @@ struct SlashCommandMenu: View {
     let onSelect: (BlockType) -> Void
     let onDismiss: () -> Void
     @State private var selectedIndex = 0
+    @FocusState private var isFocused: Bool
 
     var filteredTypes: [BlockType] {
         if query.isEmpty {
@@ -1118,8 +1211,9 @@ struct SlashCommandMenu: View {
                 // Header
                 HStack {
                     HStack(spacing: 6) {
-                        Image(systemName: "slash.circle")
+                        Image(systemName: "sparkles")
                             .font(.caption)
+                            .foregroundStyle(Color.accentColor)
                         Text("Turn into")
                             .font(.caption.weight(.medium))
                     }
@@ -1128,6 +1222,7 @@ struct SlashCommandMenu: View {
                     HStack(spacing: 4) {
                         KeyboardHint(key: "↑↓")
                         KeyboardHint(key: "↵")
+                        KeyboardHint(key: "esc")
                     }
                 }
                 .padding(.horizontal, 12)
@@ -1142,13 +1237,48 @@ struct SlashCommandMenu: View {
                     menuItems
                 }
             }
-            .frame(width: 280)
+            .frame(width: 300)
+        }
+        .focusable()
+        .focused($isFocused)
+        .onAppear {
+            isFocused = true
+        }
+        .onKeyPress(.upArrow) {
+            moveSelection(by: -1)
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            moveSelection(by: 1)
+            return .handled
+        }
+        .onKeyPress(.return) {
+            selectCurrentItem()
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            onDismiss()
+            return .handled
         }
         .onChange(of: filteredTypes.count) { _, newCount in
             if selectedIndex >= newCount {
                 selectedIndex = max(0, newCount - 1)
             }
         }
+        .onChange(of: query) { _, _ in
+            selectedIndex = 0
+        }
+    }
+
+    private func moveSelection(by offset: Int) {
+        let count = filteredTypes.count
+        guard count > 0 else { return }
+        selectedIndex = (selectedIndex + offset + count) % count
+    }
+
+    private func selectCurrentItem() {
+        guard selectedIndex < filteredTypes.count else { return }
+        onSelect(filteredTypes[selectedIndex])
     }
 
     @ViewBuilder
@@ -1167,22 +1297,104 @@ struct SlashCommandMenu: View {
 
     @ViewBuilder
     private var menuItems: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(Array(filteredTypes.enumerated()), id: \.element) { index, type in
-                    GlassMenuItem(
-                        title: type.displayName,
-                        icon: type.icon,
-                        subtitle: "/" + (type.slashAliases.first ?? ""),
-                        iconColor: type == .agent ? EditorTokens.Colors.agentAccent : .secondary
-                    ) {
-                        onSelect(type)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(Array(filteredTypes.enumerated()), id: \.element) { index, type in
+                        SlashMenuItem(
+                            type: type,
+                            isSelected: index == selectedIndex,
+                            action: { onSelect(type) }
+                        )
+                        .id(index)
                     }
                 }
+                .padding(.vertical, 4)
             }
-            .padding(.vertical, 4)
+            .frame(maxHeight: 280)
+            .onChange(of: selectedIndex) { _, newIndex in
+                withAnimation(.easeOut(duration: 0.15)) {
+                    proxy.scrollTo(newIndex, anchor: .center)
+                }
+            }
         }
-        .frame(maxHeight: 280)
+    }
+}
+
+/// Individual item in slash command menu with selection state
+private struct SlashMenuItem: View {
+    let type: BlockType
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                // Icon with colored background
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(iconBackgroundColor.opacity(0.15))
+                        .frame(width: 28, height: 28)
+
+                    Image(systemName: type.icon)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(iconBackgroundColor)
+                }
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(type.displayName)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.primary)
+
+                    Text("/" + (type.slashAliases.first ?? ""))
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                }
+
+                Spacer()
+
+                if isSelected {
+                    Image(systemName: "return")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.accentColor.opacity(0.12) : (isHovered ? Color.primary.opacity(0.05) : .clear))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.3) : .clear, lineWidth: 1)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+
+    private var iconBackgroundColor: Color {
+        switch type {
+        case .heading1, .heading2, .heading3, .text:
+            return .blue
+        case .bulletList, .numberedList, .todo:
+            return .green
+        case .code:
+            return .orange
+        case .quote:
+            return .purple
+        case .callout:
+            return .yellow
+        case .divider:
+            return .secondary
+        case .image:
+            return .pink
+        case .agent:
+            return EditorTokens.Colors.agentAccent
+        }
     }
 }
 

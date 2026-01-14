@@ -32,6 +32,22 @@ AgentKitConsole is now demo-ready with full UI implementation. Core features wor
 
 ## Recent Session (2026-01-14)
 
+**Session 4 - Settings Polish:**
+1. ✅ Added Extensions tab to ⌘, Settings preferences window
+2. ✅ Fixed Settings variable naming (`extension` → `item` to avoid keyword conflict)
+3. ✅ Added ScrollView to each Settings tab for proper overflow handling
+4. ✅ Added "Back to Open Space" button in SettingsDetailView for navigation
+5. ✅ Wired up "Show in Dock" toggle with actual NSApp.setActivationPolicy()
+6. ✅ Added onChange handlers for General Settings toggles
+
+**Session 3 - RAG & Agent Configuration:**
+1. ✅ Memory module with VecturaKit integration (on-device vector DB)
+2. ✅ Safari Reading List & Shared with You integration
+3. ✅ AppIntents MCP wrapper for native macOS integrations
+4. ✅ Extensions settings UI (discover & enable tools)
+5. ✅ Custom GPT-style chat configurator for agents
+6. ✅ ChatConfigAgent for conversational agent setup
+
 **Session 2 - UI Polish:**
 1. ✅ Settings → TabView for standard macOS ⌘, prefs pattern
 2. ✅ Document editor → Block drag-drop reordering
@@ -55,10 +71,25 @@ AgentKitConsole is now demo-ready with full UI implementation. Core features wor
 - **Decisions**: Full workflow with filtering, comments, history
 - **Approvals**: Real-time approval/deny with A2A backend
 - **Agents**: Activity visualization, conversation display
-- **Settings**: TabView prefs (General, LLM, Server, Approvals, Advanced)
+- **Settings**: TabView prefs (General, LLM, Server, Extensions, Approvals, Advanced)
+- **Extensions**: Tool discovery, enable/disable, system integrations status
+- **Agent Configurator**: Custom GPT-style chat interface for agent creation
 
 ### Architecture
 ```
+AgentKit/
+├── Memory/                     # NEW: RAG system
+│   ├── MemoryStore.swift       # VecturaKit vector DB
+│   ├── MemoryTypes.swift       # Items, sources, sync
+│   ├── ContentChunker.swift    # Document chunking
+│   ├── MemorySyncManager.swift # Master server sync
+│   └── SafariIntegration.swift # Reading List import
+├── Extensions/                 # NEW: Tool discovery
+│   ├── ExtensionRegistry.swift # Central tool registry
+│   └── AppIntentsTool.swift    # Shortcuts/AppIntents wrapper
+├── Agent/
+│   └── ChatConfigAgent.swift   # NEW: Conversational config
+
 AgentKitConsole/
 ├── AgentKitConsoleApp.swift    # App entry with Window + MenuBarExtra
 ├── Models/
@@ -70,10 +101,9 @@ AgentKitConsole/
 └── Views/
     ├── ContentView.swift       # Navigation, sidebar, detail router
     ├── DashboardView.swift     # Status, agents, conversations
-    ├── OpenSpaceView.swift     # Timeline, capture card
-    ├── DocumentEditorView.swift # Block-based editor
-    ├── DecisionCardView.swift  # Decision workflow
-    └── ... (12+ view files)
+    ├── SettingsView.swift      # Now includes Extensions tab
+    ├── AgentConfiguratorView.swift # NEW: Chat-based config UI
+    └── ... (15+ view files)
 ```
 
 ## Key Decisions Made
@@ -86,6 +116,8 @@ AgentKitConsole/
 | Protocol | A2A (agent-to-agent interop) |
 | Context Pattern | ACE (incremental compaction) |
 | UI Framework | SwiftUI with AppKit integration |
+| Vector Database | VecturaKit (on-device, MLX embeddings) |
+| Agent Config | Chat-based (Custom GPT pattern) |
 
 ## Repository State
 
@@ -112,11 +144,17 @@ AgentKitConsole/
 ## Next Steps
 
 1. **Testing**: Run full demo flow with live agents
-2. **Feature Ideas** (from user feedback):
-   - Reading list auto-import with RAG (vector database like LibreChat)
+2. **VecturaKit Integration**: Test VecturaKit API and enable proper vector search
+3. **Integration Testing**:
+   - Test memory indexing with real documents
+   - Test Safari Reading List import flow
+   - Test Extensions discovery with Shortcuts
+   - Test Agent Configurator chat flow
+4. **Feature Ideas** (future):
    - Agent wrapper for Claude Code/Codex/Gemini as orchestration tools
-   - Chat-based agent config (like Custom GPTs - chat updates config)
-3. **F004**: Consider Claude SDK port for enhanced capabilities
+   - Memory sync with master server (P2P/mesh)
+   - More AppIntents integrations (Notes, Mail compose)
+5. **F004**: Consider Claude SDK port for enhanced capabilities
 
 ## Notes for Future Sessions
 

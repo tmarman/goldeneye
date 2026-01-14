@@ -365,16 +365,23 @@ struct EditorBlockModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .padding(.vertical, EditorTokens.Spacing.blockVertical)
-            .padding(.horizontal, 4)
+            .padding(.vertical, EditorTokens.Spacing.blockVertical + 4)
+            .padding(.horizontal, 8)
             .background(
                 RoundedRectangle(cornerRadius: EditorTokens.Radii.block)
                     .fill(backgroundColor)
+                    .shadow(
+                        color: shadowColor,
+                        radius: shadowRadius,
+                        x: 0,
+                        y: shadowY
+                    )
             )
             .overlay(
                 RoundedRectangle(cornerRadius: EditorTokens.Radii.block)
-                    .stroke(isFocused ? EditorTokens.Colors.blockFocusBorder : Color.clear, lineWidth: 1)
+                    .stroke(borderColor, lineWidth: isFocused ? 1.5 : 0.5)
             )
+            .scaleEffect(isHovered && !isFocused ? 1.002 : 1.0)
             .animation(.liquidGlassQuick, value: isHovered)
             .animation(.liquidGlassQuick, value: isFocused)
     }
@@ -383,9 +390,39 @@ struct EditorBlockModifier: ViewModifier {
         if isFocused {
             return EditorTokens.Colors.blockFocusBackground
         } else if isHovered {
-            return EditorTokens.Colors.blockHoverBackground
+            return Color(nsColor: .controlBackgroundColor).opacity(0.5)
         }
         return .clear
+    }
+
+    private var borderColor: Color {
+        if isFocused {
+            return EditorTokens.Colors.blockFocusBorder
+        } else if isHovered {
+            return Color(nsColor: .separatorColor).opacity(0.3)
+        }
+        return .clear
+    }
+
+    private var shadowColor: Color {
+        if isFocused {
+            return .black.opacity(0.08)
+        } else if isHovered {
+            return .black.opacity(0.04)
+        }
+        return .clear
+    }
+
+    private var shadowRadius: CGFloat {
+        if isFocused { return 8 }
+        if isHovered { return 4 }
+        return 0
+    }
+
+    private var shadowY: CGFloat {
+        if isFocused { return 3 }
+        if isHovered { return 2 }
+        return 0
     }
 }
 
@@ -988,5 +1025,382 @@ struct DateDisplay: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - Craft-Style Inline Formatting Toolbar
+
+/// A floating inline formatting toolbar that appears on text selection (Craft-like)
+struct InlineFormattingToolbar: View {
+    let onBold: () -> Void
+    let onItalic: () -> Void
+    let onStrikethrough: () -> Void
+    let onCode: () -> Void
+    let onLink: () -> Void
+    let onHighlight: () -> Void
+
+    var body: some View {
+        HStack(spacing: 2) {
+            FormatButton(icon: "bold", help: "Bold (⌘B)", action: onBold)
+            FormatButton(icon: "italic", help: "Italic (⌘I)", action: onItalic)
+            FormatButton(icon: "strikethrough", help: "Strikethrough", action: onStrikethrough)
+
+            ToolbarDivider()
+
+            FormatButton(icon: "chevron.left.forwardslash.chevron.right", help: "Code", action: onCode)
+            FormatButton(icon: "link", help: "Link (⌘K)", action: onLink)
+            FormatButton(icon: "highlighter", help: "Highlight", action: onHighlight)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
+    }
+}
+
+/// Individual format button for the inline toolbar
+private struct FormatButton: View {
+    let icon: String
+    let help: String
+    let action: () -> Void
+    @State private var isHovered = false
+    @State private var isPressed = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(isHovered ? .primary : .secondary)
+                .frame(width: 28, height: 24)
+                .background(
+                    RoundedRectangle(cornerRadius: 5)
+                        .fill(isHovered ? Color.primary.opacity(0.1) : .clear)
+                )
+                .scaleEffect(isPressed ? 0.92 : 1.0)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in isPressed = true }
+                .onEnded { _ in isPressed = false }
+        )
+        .help(help)
+    }
+}
+
+/// Small vertical divider for toolbar sections
+private struct ToolbarDivider: View {
+    var body: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.12))
+            .frame(width: 1, height: 16)
+            .padding(.horizontal, 4)
+    }
+}
+
+// MARK: - Enhanced Block Handle (Craft-style)
+
+/// A Craft-style drag handle with grip dots pattern
+struct CraftBlockHandle: View {
+    let isVisible: Bool
+    @State private var isHovered = false
+    @State private var isDragging = false
+
+    var body: some View {
+        VStack(spacing: 3) {
+            ForEach(0..<3, id: \.self) { _ in
+                HStack(spacing: 3) {
+                    Circle()
+                        .fill(dotColor)
+                        .frame(width: 3, height: 3)
+                    Circle()
+                        .fill(dotColor)
+                        .frame(width: 3, height: 3)
+                }
+            }
+        }
+        .frame(width: 18, height: 20)
+        .contentShape(Rectangle())
+        .opacity(isVisible ? 1 : 0)
+        .scaleEffect(isHovered ? 1.1 : 1.0)
+        .animation(.liquidGlassQuick, value: isVisible)
+        .animation(.liquidGlassQuick, value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+
+    private var dotColor: Color {
+        if isHovered {
+            return .primary.opacity(0.5)
+        }
+        return .secondary.opacity(0.4)
+    }
+}
+
+// MARK: - Craft-Style Add Block Button
+
+/// A minimal "+" button that appears between blocks on hover (Craft-style)
+struct CraftAddBlockButton: View {
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 0) {
+                // Left line
+                Rectangle()
+                    .fill(Color.primary.opacity(isHovered ? 0.15 : 0.08))
+                    .frame(height: 1)
+
+                // Center plus button
+                ZStack {
+                    Circle()
+                        .fill(isHovered ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.05))
+                        .frame(width: 20, height: 20)
+
+                    Image(systemName: "plus")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(isHovered ? Color.accentColor : .secondary)
+                }
+                .scaleEffect(isHovered ? 1.1 : 1.0)
+
+                // Right line
+                Rectangle()
+                    .fill(Color.primary.opacity(isHovered ? 0.15 : 0.08))
+                    .frame(height: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .frame(height: 20)
+        .opacity(isHovered ? 1 : 0.5)
+        .animation(.liquidGlassQuick, value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Craft-Style Block Type Picker
+
+/// A more visual block type picker with icons and descriptions (like Craft's "/" menu)
+struct CraftBlockTypePicker: View {
+    let query: String
+    let onSelect: (CraftBlockType) -> Void
+    let onDismiss: () -> Void
+    @State private var selectedIndex = 0
+
+    private var filteredTypes: [CraftBlockType] {
+        if query.isEmpty {
+            return CraftBlockType.allCases
+        }
+        return CraftBlockType.allCases.filter { type in
+            type.displayName.localizedCaseInsensitiveContains(query) ||
+            type.keywords.contains { $0.localizedCaseInsensitiveContains(query) }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "sparkles")
+                    .font(.caption)
+                    .foregroundStyle(Color.accentColor)
+                Text("Turn into")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("esc to close")
+                    .font(.caption2)
+                    .foregroundStyle(.quaternary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+
+            Divider()
+                .opacity(0.5)
+
+            if filteredTypes.isEmpty {
+                // Empty state
+                VStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.title3)
+                        .foregroundStyle(.quaternary)
+                    Text("No blocks found")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 32)
+            } else {
+                // Block types grid
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
+                        ForEach(Array(filteredTypes.enumerated()), id: \.element) { index, type in
+                            BlockTypeCard(
+                                type: type,
+                                isSelected: index == selectedIndex,
+                                action: { onSelect(type) }
+                            )
+                        }
+                    }
+                    .padding(8)
+                }
+                .frame(maxHeight: 280)
+            }
+        }
+        .frame(width: 320)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.primary.opacity(0.1), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.2), radius: 20, y: 8)
+    }
+}
+
+/// Individual block type card in the picker
+private struct BlockTypeCard: View {
+    let type: CraftBlockType
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 6) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(type.iconBackgroundColor.opacity(0.15))
+                        .frame(width: 36, height: 36)
+
+                    Image(systemName: type.icon)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(type.iconBackgroundColor)
+                }
+
+                Text(type.displayName)
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill((isHovered || isSelected) ? Color.accentColor.opacity(0.1) : .clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(isSelected ? Color.accentColor.opacity(0.5) : .clear, lineWidth: 1.5)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+/// Block types for the Craft-style picker
+enum CraftBlockType: String, CaseIterable, Identifiable {
+    case text, heading1, heading2, heading3
+    case bulletList, numberedList, todo, toggle
+    case code, quote, callout, divider
+    case image, agent
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .text: return "Text"
+        case .heading1: return "Heading 1"
+        case .heading2: return "Heading 2"
+        case .heading3: return "Heading 3"
+        case .bulletList: return "Bullet List"
+        case .numberedList: return "Numbered"
+        case .todo: return "To-do"
+        case .toggle: return "Toggle"
+        case .code: return "Code"
+        case .quote: return "Quote"
+        case .callout: return "Callout"
+        case .divider: return "Divider"
+        case .image: return "Image"
+        case .agent: return "Agent"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .text: return "text.alignleft"
+        case .heading1: return "textformat.size.larger"
+        case .heading2: return "textformat.size"
+        case .heading3: return "textformat.size.smaller"
+        case .bulletList: return "list.bullet"
+        case .numberedList: return "list.number"
+        case .todo: return "checkmark.square"
+        case .toggle: return "chevron.right.circle"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .quote: return "text.quote"
+        case .callout: return "exclamationmark.circle"
+        case .divider: return "minus"
+        case .image: return "photo"
+        case .agent: return "sparkles"
+        }
+    }
+
+    var iconBackgroundColor: Color {
+        switch self {
+        case .text, .heading1, .heading2, .heading3: return .blue
+        case .bulletList, .numberedList, .todo: return .green
+        case .toggle: return .orange
+        case .code: return .orange
+        case .quote: return .purple
+        case .callout: return .yellow
+        case .divider: return .secondary
+        case .image: return .pink
+        case .agent: return EditorTokens.Colors.agentAccent
+        }
+    }
+
+    var keywords: [String] {
+        switch self {
+        case .text: return ["text", "paragraph", "p"]
+        case .heading1: return ["h1", "heading", "title"]
+        case .heading2: return ["h2", "subheading"]
+        case .heading3: return ["h3"]
+        case .bulletList: return ["bullet", "list", "ul", "-"]
+        case .numberedList: return ["number", "ol", "1."]
+        case .todo: return ["todo", "task", "checkbox", "[]"]
+        case .toggle: return ["toggle", "collapse", "expand"]
+        case .code: return ["code", "```", "programming"]
+        case .quote: return ["quote", "blockquote", ">"]
+        case .callout: return ["callout", "note", "tip", "warning"]
+        case .divider: return ["divider", "hr", "---", "line"]
+        case .image: return ["image", "img", "photo", "picture"]
+        case .agent: return ["agent", "ai", "sparkle", "assistant"]
+        }
+    }
+}
+
+// MARK: - Block Insertion Indicator
+
+/// A visual indicator showing where a dragged block will be inserted
+struct BlockInsertionIndicator: View {
+    var body: some View {
+        HStack(spacing: 0) {
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 6, height: 6)
+
+            Rectangle()
+                .fill(Color.accentColor)
+                .frame(height: 2)
+
+            Circle()
+                .fill(Color.accentColor)
+                .frame(width: 6, height: 6)
+        }
+        .shadow(color: Color.accentColor.opacity(0.3), radius: 4)
     }
 }

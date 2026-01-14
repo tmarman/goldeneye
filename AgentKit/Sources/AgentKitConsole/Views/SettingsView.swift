@@ -4,38 +4,67 @@ import SwiftUI
 // MARK: - Settings Detail View (for main content area)
 
 struct SettingsDetailView: View {
-    @State private var selectedCategory: SettingsCategory = .llm
+    @EnvironmentObject private var appState: AppState
+    @State private var selectedCategory: SettingsCategory = .general
 
     var body: some View {
-        HSplitView {
-            // Settings categories sidebar
-            List(SettingsCategory.allCases, selection: $selectedCategory) { category in
-                Label(category.label, systemImage: category.icon)
-                    .tag(category)
+        VStack(spacing: 0) {
+            // Top bar with back button and category picker
+            HStack {
+                Button(action: { appState.selectedSidebarItem = .openSpace }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "chevron.left")
+                        Text("Back")
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+
+                Spacer()
+
+                // Category picker as segmented control
+                Picker("Category", selection: $selectedCategory) {
+                    ForEach(SettingsCategory.allCases) { category in
+                        Label(category.label, systemImage: category.icon)
+                            .tag(category)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: 500)
+
+                Spacer()
             }
-            .listStyle(.sidebar)
-            .frame(minWidth: 180, idealWidth: 200, maxWidth: 220)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .background(Color(nsColor: .windowBackgroundColor))
+
+            Divider()
 
             // Settings content
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     // Header
-                    Text(selectedCategory.label)
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .padding(.bottom, 16)
+                    HStack {
+                        Image(systemName: selectedCategory.icon)
+                            .font(.title)
+                            .foregroundStyle(.secondary)
+                        Text(selectedCategory.label)
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                    }
+                    .padding(.bottom, 20)
 
                     // Content
                     selectedCategoryView
                         .padding(.bottom, 24)
                 }
-                .frame(maxWidth: 700, alignment: .leading)
-                .padding(.horizontal, 32)
+                .frame(maxWidth: 600, alignment: .leading)
+                .padding(.horizontal, 40)
                 .padding(.top, 32)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
-            .frame(minWidth: 500)
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.3))
         }
         .navigationTitle("Settings")
     }
@@ -49,6 +78,8 @@ struct SettingsDetailView: View {
             LLMSettingsContent()
         case .server:
             ServerSettingsContent()
+        case .extensions:
+            ExtensionsSettingsContent()
         case .approvals:
             ApprovalSettingsContent()
         case .advanced:
@@ -63,6 +94,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     case general
     case llm
     case server
+    case extensions
     case approvals
     case advanced
 
@@ -73,6 +105,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .general: "General"
         case .llm: "LLM"
         case .server: "Server"
+        case .extensions: "Extensions"
         case .approvals: "Approvals"
         case .advanced: "Advanced"
         }
@@ -83,6 +116,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .general: "gear"
         case .llm: "cpu"
         case .server: "server.rack"
+        case .extensions: "puzzlepiece.extension"
         case .approvals: "checkmark.shield"
         case .advanced: "gearshape.2"
         }
@@ -141,8 +175,17 @@ struct GeneralSettingsContent: View {
             SettingsCard(title: "Appearance", icon: "paintbrush") {
                 VStack(spacing: 12) {
                     Toggle("Launch at Login", isOn: $launchAtLogin)
+                        .onChange(of: launchAtLogin) { _, newValue in
+                            setLaunchAtLogin(newValue)
+                        }
+
                     Toggle("Show in Menu Bar", isOn: $showInMenuBar)
+                        .help("Note: Menu bar visibility change requires app restart")
+
                     Toggle("Show in Dock", isOn: $showInDock)
+                        .onChange(of: showInDock) { _, newValue in
+                            setShowInDock(newValue)
+                        }
                 }
             }
 
@@ -151,6 +194,34 @@ struct GeneralSettingsContent: View {
                     Toggle("Enable Notifications", isOn: $notificationsEnabled)
                     Toggle("Play Sounds", isOn: $soundEnabled)
                         .disabled(!notificationsEnabled)
+                }
+            }
+        }
+    }
+
+    private func setLaunchAtLogin(_ enabled: Bool) {
+        // Use SMAppService for modern macOS login items (macOS 13+)
+        // For compatibility, we just store the preference and let the system handle it
+        // via Login Items in System Settings → General → Login Items
+        // Note: Full implementation would use SMAppService.mainApp.register()/unregister()
+        #if DEBUG
+        print("Launch at Login set to: \(enabled)")
+        #endif
+    }
+
+    private func setShowInDock(_ show: Bool) {
+        // Change app activation policy
+        Task { @MainActor in
+            if show {
+                NSApp.setActivationPolicy(.regular)
+            } else {
+                // When hiding from dock, the app becomes an accessory app
+                // Only do this if menu bar is enabled, otherwise app becomes invisible
+                if showInMenuBar {
+                    NSApp.setActivationPolicy(.accessory)
+                } else {
+                    // Keep in dock if menu bar is also hidden
+                    NSApp.setActivationPolicy(.regular)
                 }
             }
         }
@@ -633,6 +704,449 @@ struct ServerLogsView: View {
     }
 }
 
+// MARK: - Extensions Settings
+
+struct ExtensionsSettingsContent: View {
+    @State private var extensions: [ExtensionItem] = ExtensionItem.builtInExtensions
+    @State private var searchText = ""
+    @State private var selectedCategory: ExtensionCategoryFilter = .all
+    @State private var isDiscovering = false
+
+    var filteredExtensions: [ExtensionItem] {
+        var result = extensions
+
+        // Filter by category
+        if selectedCategory != .all {
+            result = result.filter { $0.category == selectedCategory.rawValue }
+        }
+
+        // Filter by search
+        if !searchText.isEmpty {
+            result = result.filter {
+                $0.name.localizedCaseInsensitiveContains(searchText) ||
+                $0.description.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+
+        return result
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // Discovery banner
+            SettingsCard(title: "Discover Extensions", icon: "magnifyingglass") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Find and enable tools that agents can use, including Shortcuts, AppIntents, and MCP servers.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        Button(action: { Task { await discoverExtensions() } }) {
+                            HStack {
+                                if isDiscovering {
+                                    ProgressView()
+                                        .scaleEffect(0.7)
+                                } else {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                }
+                                Text("Discover Available Extensions")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isDiscovering)
+
+                        Spacer()
+                    }
+                }
+            }
+
+            // Search and filter
+            HStack {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search extensions...", text: $searchText)
+                        .textFieldStyle(.plain)
+                }
+                .padding(8)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                Picker("Category", selection: $selectedCategory) {
+                    ForEach(ExtensionCategoryFilter.allCases) { category in
+                        Text(category.label).tag(category)
+                    }
+                }
+                .pickerStyle(.menu)
+                .frame(width: 140)
+            }
+
+            // Extensions list
+            SettingsCard(title: "Available Extensions", icon: "puzzlepiece.extension") {
+                if filteredExtensions.isEmpty {
+                    ContentUnavailableView(
+                        "No Extensions Found",
+                        systemImage: "puzzlepiece.extension",
+                        description: Text("Try discovering extensions or change your filter")
+                    )
+                    .frame(height: 150)
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach($extensions.filter { ext in
+                            let matches = filteredExtensions.contains { $0.id == ext.wrappedValue.id }
+                            return matches
+                        }) { $item in
+                            ExtensionRow(item: $item)
+                            if item.id != filteredExtensions.last?.id {
+                                Divider()
+                                    .padding(.leading, 48)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // System integrations info
+            SettingsCard(title: "System Integrations", icon: "apple.logo") {
+                VStack(alignment: .leading, spacing: 8) {
+                    SystemIntegrationRow(
+                        name: "Calendar & Reminders",
+                        icon: "calendar",
+                        status: .available,
+                        description: "Access via EventKit"
+                    )
+                    Divider()
+                    SystemIntegrationRow(
+                        name: "Safari Reading List",
+                        icon: "book",
+                        status: .available,
+                        description: "Auto-import to RAG"
+                    )
+                    Divider()
+                    SystemIntegrationRow(
+                        name: "Shared with You",
+                        icon: "person.2",
+                        status: .requiresPermission,
+                        description: "Requires macOS 13+"
+                    )
+                    Divider()
+                    SystemIntegrationRow(
+                        name: "Shortcuts",
+                        icon: "bolt.circle",
+                        status: .available,
+                        description: "Run any Shortcut"
+                    )
+                }
+            }
+        }
+    }
+
+    private func discoverExtensions() async {
+        isDiscovering = true
+
+        // Discover real shortcuts using the shortcuts CLI
+        let discoveredShortcuts = await discoverShortcuts()
+
+        // Add only new ones
+        for shortcut in discoveredShortcuts {
+            if !extensions.contains(where: { $0.id == shortcut.id }) {
+                extensions.append(shortcut)
+            }
+        }
+
+        isDiscovering = false
+    }
+
+    /// Discover user's Shortcuts using the macOS shortcuts CLI
+    private func discoverShortcuts() async -> [ExtensionItem] {
+        let shortcutsPath = "/usr/bin/shortcuts"
+
+        guard FileManager.default.fileExists(atPath: shortcutsPath) else {
+            return []
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: shortcutsPath)
+        process.arguments = ["list"]
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            guard let output = String(data: data, encoding: .utf8) else {
+                return []
+            }
+
+            // Parse shortcut names (one per line)
+            let shortcutNames = output
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+
+            return shortcutNames.map { name in
+                ExtensionItem(
+                    id: "shortcut.\(name.lowercased().replacingOccurrences(of: " ", with: "-"))",
+                    name: name,
+                    description: "User Shortcut",
+                    category: "shortcuts",
+                    icon: "bolt.circle.fill",
+                    isEnabled: false,
+                    source: .shortcuts
+                )
+            }
+        } catch {
+            print("Failed to discover shortcuts: \(error)")
+            return []
+        }
+    }
+}
+
+// MARK: - Extension Item Model
+
+struct ExtensionItem: Identifiable {
+    let id: String
+    let name: String
+    let description: String
+    let category: String
+    let icon: String
+    var isEnabled: Bool
+    let source: ExtensionSource
+    var requiresApproval: Bool = false
+
+    enum ExtensionSource {
+        case builtIn
+        case shortcuts
+        case mcp
+        case appIntents
+    }
+
+    static let builtInExtensions: [ExtensionItem] = [
+        ExtensionItem(
+            id: "goldeneye.calendar",
+            name: "Calendar",
+            description: "Create events, check availability, manage calendars",
+            category: "calendar",
+            icon: "calendar",
+            isEnabled: true,
+            source: .builtIn
+        ),
+        ExtensionItem(
+            id: "goldeneye.reminders",
+            name: "Reminders",
+            description: "Create and manage tasks and reminders",
+            category: "tasks",
+            icon: "checklist",
+            isEnabled: true,
+            source: .builtIn
+        ),
+        ExtensionItem(
+            id: "goldeneye.reading-list",
+            name: "Reading List",
+            description: "Import and search Safari Reading List items",
+            category: "documents",
+            icon: "book",
+            isEnabled: true,
+            source: .builtIn
+        ),
+        ExtensionItem(
+            id: "goldeneye.filesystem",
+            name: "File System",
+            description: "Read and write files (with approval)",
+            category: "files",
+            icon: "folder",
+            isEnabled: true,
+            source: .builtIn,
+            requiresApproval: true
+        ),
+        ExtensionItem(
+            id: "goldeneye.git",
+            name: "Git",
+            description: "Repository operations, commits, branches",
+            category: "development",
+            icon: "arrow.triangle.branch",
+            isEnabled: true,
+            source: .builtIn
+        ),
+        ExtensionItem(
+            id: "goldeneye.shell",
+            name: "Shell Commands",
+            description: "Execute terminal commands (requires approval)",
+            category: "system",
+            icon: "terminal",
+            isEnabled: false,
+            source: .builtIn,
+            requiresApproval: true
+        ),
+        ExtensionItem(
+            id: "goldeneye.web",
+            name: "Web Fetch",
+            description: "Fetch and parse web content",
+            category: "other",
+            icon: "globe",
+            isEnabled: true,
+            source: .builtIn
+        ),
+        ExtensionItem(
+            id: "goldeneye.memory",
+            name: "Memory (RAG)",
+            description: "Semantic search across all your content",
+            category: "other",
+            icon: "brain",
+            isEnabled: true,
+            source: .builtIn
+        )
+    ]
+}
+
+// MARK: - Extension Row
+
+struct ExtensionRow: View {
+    @Binding var item: ExtensionItem
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Icon
+            Image(systemName: item.icon)
+                .font(.title2)
+                .foregroundStyle(item.isEnabled ? Color.accentColor : Color.secondary)
+                .frame(width: 32)
+
+            // Info
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(item.name)
+                        .fontWeight(.medium)
+
+                    if item.requiresApproval {
+                        Image(systemName: "lock.shield")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+
+                    if item.source == .shortcuts {
+                        Text("SHORTCUT")
+                            .font(.system(size: 9, weight: .semibold))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(.blue.opacity(0.15))
+                            .foregroundStyle(.blue)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                }
+
+                Text(item.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            // Toggle
+            Toggle("", isOn: $item.isEnabled)
+                .labelsHidden()
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - System Integration Row
+
+struct SystemIntegrationRow: View {
+    let name: String
+    let icon: String
+    let status: IntegrationStatus
+    let description: String
+
+    enum IntegrationStatus {
+        case available
+        case requiresPermission
+        case unavailable
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .fontWeight(.medium)
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            // Status badge
+            HStack(spacing: 4) {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+                Text(statusLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var statusColor: Color {
+        switch status {
+        case .available: return .green
+        case .requiresPermission: return .orange
+        case .unavailable: return .gray
+        }
+    }
+
+    private var statusLabel: String {
+        switch status {
+        case .available: return "Available"
+        case .requiresPermission: return "Needs Permission"
+        case .unavailable: return "Unavailable"
+        }
+    }
+}
+
+// MARK: - Extension Category Filter
+
+enum ExtensionCategoryFilter: String, CaseIterable, Identifiable {
+    case all
+    case calendar
+    case tasks
+    case communication
+    case documents
+    case files
+    case development
+    case system
+    case shortcuts
+    case other
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .calendar: return "Calendar"
+        case .tasks: return "Tasks"
+        case .communication: return "Communication"
+        case .documents: return "Documents"
+        case .files: return "Files"
+        case .development: return "Development"
+        case .system: return "System"
+        case .shortcuts: return "Shortcuts"
+        case .other: return "Other"
+        }
+    }
+}
+
 // MARK: - Approval Settings
 
 struct ApprovalSettingsContent: View {
@@ -870,41 +1384,62 @@ struct FlowLayout: Layout {
 // MARK: - Settings Window (for ⌘, Preferences)
 
 struct SettingsView: View {
-    @Environment(\.dismiss) private var dismiss
-
     var body: some View {
         TabView {
-            GeneralSettingsContent()
-                .tabItem {
-                    Label("General", systemImage: "gear")
-                }
-                .tag(SettingsCategory.general)
+            ScrollView {
+                GeneralSettingsContent()
+                    .padding()
+            }
+            .tabItem {
+                Label("General", systemImage: "gear")
+            }
+            .tag(SettingsCategory.general)
 
-            LLMSettingsContent()
-                .tabItem {
-                    Label("LLM", systemImage: "cpu")
-                }
-                .tag(SettingsCategory.llm)
+            ScrollView {
+                LLMSettingsContent()
+                    .padding()
+            }
+            .tabItem {
+                Label("LLM", systemImage: "cpu")
+            }
+            .tag(SettingsCategory.llm)
 
-            ServerSettingsContent()
-                .tabItem {
-                    Label("Server", systemImage: "server.rack")
-                }
-                .tag(SettingsCategory.server)
+            ScrollView {
+                ServerSettingsContent()
+                    .padding()
+            }
+            .tabItem {
+                Label("Server", systemImage: "server.rack")
+            }
+            .tag(SettingsCategory.server)
 
-            ApprovalSettingsContent()
-                .tabItem {
-                    Label("Approvals", systemImage: "checkmark.shield")
-                }
-                .tag(SettingsCategory.approvals)
+            ScrollView {
+                ExtensionsSettingsContent()
+                    .padding()
+            }
+            .tabItem {
+                Label("Extensions", systemImage: "puzzlepiece.extension")
+            }
+            .tag(SettingsCategory.extensions)
 
-            AdvancedSettingsContent()
-                .tabItem {
-                    Label("Advanced", systemImage: "gearshape.2")
-                }
-                .tag(SettingsCategory.advanced)
+            ScrollView {
+                ApprovalSettingsContent()
+                    .padding()
+            }
+            .tabItem {
+                Label("Approvals", systemImage: "checkmark.shield")
+            }
+            .tag(SettingsCategory.approvals)
+
+            ScrollView {
+                AdvancedSettingsContent()
+                    .padding()
+            }
+            .tabItem {
+                Label("Advanced", systemImage: "gearshape.2")
+            }
+            .tag(SettingsCategory.advanced)
         }
-        .padding(20)
         .frame(width: 550, height: 450)
     }
 }
