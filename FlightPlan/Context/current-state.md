@@ -32,6 +32,15 @@ AgentKitConsole is now demo-ready with full UI implementation. Core features wor
 
 ## Recent Session (2026-01-14)
 
+**Session 5 - Content Sync Integration:**
+1. ✅ Implemented ContentSyncService for background syncing
+2. ✅ Enhanced SharedWithYouIntegration with SWHighlightCenter API
+3. ✅ Wired ContentSyncService into AppState with async initialization
+4. ✅ Added getReadingListItems() and getSharedItems() to MemoryStore
+5. ✅ Display synced Reading List and Shared with You items in OpenSpace timeline
+6. ✅ Periodic background sync (every 5 minutes) with error tracking
+7. ✅ All synced content indexed for RAG retrieval
+
 **Session 4 - Settings Polish:**
 1. ✅ Added Extensions tab to ⌘, Settings preferences window
 2. ✅ Fixed Settings variable naming (`extension` → `item` to avoid keyword conflict)
@@ -42,7 +51,7 @@ AgentKitConsole is now demo-ready with full UI implementation. Core features wor
 
 **Session 3 - RAG & Agent Configuration:**
 1. ✅ Memory module with VecturaKit integration (on-device vector DB)
-2. ✅ Safari Reading List & Shared with You integration
+2. ✅ Safari Reading List & Shared with You integration (initial)
 3. ✅ AppIntents MCP wrapper for native macOS integrations
 4. ✅ Extensions settings UI (discover & enable tools)
 5. ✅ Custom GPT-style chat configurator for agents
@@ -78,17 +87,18 @@ AgentKitConsole is now demo-ready with full UI implementation. Core features wor
 ### Architecture
 ```
 AgentKit/
-├── Memory/                     # NEW: RAG system
+├── Memory/                     # RAG system
 │   ├── MemoryStore.swift       # VecturaKit vector DB
 │   ├── MemoryTypes.swift       # Items, sources, sync
 │   ├── ContentChunker.swift    # Document chunking
 │   ├── MemorySyncManager.swift # Master server sync
-│   └── SafariIntegration.swift # Reading List import
-├── Extensions/                 # NEW: Tool discovery
+│   ├── ContentSyncService.swift # Background sync coordinator
+│   └── SafariIntegration.swift # Reading List + Shared with You
+├── Extensions/                 # Tool discovery
 │   ├── ExtensionRegistry.swift # Central tool registry
 │   └── AppIntentsTool.swift    # Shortcuts/AppIntents wrapper
 ├── Agent/
-│   └── ChatConfigAgent.swift   # NEW: Conversational config
+│   └── ChatConfigAgent.swift   # Conversational config
 
 AgentKitConsole/
 ├── AgentKitConsoleApp.swift    # App entry with Window + MenuBarExtra
