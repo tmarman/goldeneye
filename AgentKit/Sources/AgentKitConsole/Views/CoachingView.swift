@@ -255,6 +255,8 @@ struct CoachingSessionDetailView: View {
     @EnvironmentObject private var appState: AppState
     @State private var newMessage = ""
     @State private var isLoading = false
+    @State private var showAddNoteAlert = false
+    @State private var noteText = ""
 
     var body: some View {
         HSplitView {
@@ -394,9 +396,10 @@ struct CoachingSessionDetailView: View {
                         Text("Notes")
                             .font(.headline)
                         Spacer()
-                        Button(action: {}) {
+                        Button(action: { showAddNoteAlert = true }) {
                             Image(systemName: "plus")
                         }
+                        .help("Add note")
                     }
 
                     if session.notes.isEmpty {
@@ -417,6 +420,19 @@ struct CoachingSessionDetailView: View {
             .padding()
         }
         .background(Color(.windowBackgroundColor))
+        .alert("Add Note", isPresented: $showAddNoteAlert) {
+            TextField("Note", text: $noteText, axis: .vertical)
+                .lineLimit(3...6)
+            Button("Cancel", role: .cancel) {
+                noteText = ""
+            }
+            Button("Add") {
+                addNote()
+            }
+            .disabled(noteText.isEmpty)
+        } message: {
+            Text("Add a personal note about this coaching session.")
+        }
     }
 
     private var domainColor: Color {
@@ -444,6 +460,23 @@ struct CoachingSessionDetailView: View {
         if let index = appState.workspace.coachingSessions.firstIndex(where: { $0.id == session.id }) {
             appState.workspace.coachingSessions[index].phase = session.phase.next
         }
+    }
+
+    private func addNote() {
+        guard !noteText.isEmpty else { return }
+
+        let note = CoachingNote(
+            id: UUID(),
+            content: noteText,
+            type: .general
+        )
+
+        if let index = appState.workspace.coachingSessions.firstIndex(where: { $0.id == session.id }) {
+            appState.workspace.coachingSessions[index].notes.append(note)
+            appState.workspace.coachingSessions[index].updatedAt = Date()
+        }
+
+        noteText = ""
     }
 
     private func sendMessage() {
