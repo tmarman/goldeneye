@@ -15,6 +15,10 @@ struct ContentView: View {
         }
         .navigationSplitViewStyle(.balanced)
         .frame(minWidth: 1000, minHeight: 700)
+        // Handle Cmd+, to navigate to Settings
+        .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { _ in
+            appState.selectedSidebarItem = .settings
+        }
         // Agent panel overlay
         .overlay(alignment: .bottomTrailing) {
             AgentPanelButton()
@@ -725,3 +729,4 @@ struct ConnectAgentSheet: View {
         dismiss()
     }
 }
+

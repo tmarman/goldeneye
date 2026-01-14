@@ -478,37 +478,54 @@ struct TimelineItemRow: View {
     var onSnooze: ((TimelineTask) -> Void)?
     var onCreateTask: ((TimelineItemViewModel) -> Void)?
 
+    @State private var isHovered = false
+    @State private var pulsePhase = false
+
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            // Time column
-            VStack {
+            // Enhanced time column
+            VStack(spacing: 6) {
                 if let time = item.displayTime {
                     Text(time)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                        .font(.caption.monospacedDigit().weight(.medium))
+                        .foregroundStyle(isHovered ? .primary : .secondary)
                 }
 
-                // Timeline dot
-                Circle()
-                    .fill(item.isProcessing ? Color.orange : item.iconColor.opacity(0.3))
-                    .frame(width: 8, height: 8)
-                    .overlay {
-                        if item.isProcessing {
-                            Circle()
-                                .stroke(Color.orange, lineWidth: 2)
-                                .scaleEffect(1.5)
-                                .opacity(0)
-                                .animation(.easeOut(duration: 1).repeatForever(autoreverses: false), value: item.isProcessing)
-                        }
+                // Enhanced timeline dot with pulse
+                ZStack {
+                    if item.isProcessing {
+                        Circle()
+                            .stroke(Color.orange.opacity(0.3), lineWidth: 2)
+                            .frame(width: 16, height: 16)
+                            .scaleEffect(pulsePhase ? 1.5 : 1.0)
+                            .opacity(pulsePhase ? 0 : 0.8)
                     }
+
+                    Circle()
+                        .fill(item.isProcessing ? Color.orange : item.iconColor.opacity(isHovered ? 0.5 : 0.3))
+                        .frame(width: 10, height: 10)
+                        .overlay {
+                            Circle()
+                                .stroke(item.iconColor.opacity(0.1), lineWidth: isHovered ? 2 : 0)
+                                .frame(width: 16, height: 16)
+                        }
+                }
             }
             .frame(width: 50)
 
-            // Content
+            // Content with hover background
             VStack(alignment: .leading, spacing: 6) {
-                HStack {
-                    Image(systemName: item.icon)
-                        .foregroundStyle(item.iconColor)
+                HStack(spacing: 10) {
+                    // Icon with background
+                    ZStack {
+                        Circle()
+                            .fill(item.iconColor.opacity(0.12))
+                            .frame(width: 28, height: 28)
+
+                        Image(systemName: item.icon)
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(item.iconColor)
+                    }
 
                     Text(item.title)
                         .font(.body.weight(.medium))
@@ -516,8 +533,14 @@ struct TimelineItemRow: View {
                     Spacer()
 
                     if item.isProcessing {
-                        ProgressView()
-                            .scaleEffect(0.7)
+                        HStack(spacing: 4) {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                                .frame(width: 12, height: 12)
+                            Text("Processing")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                 }
 
@@ -533,14 +556,25 @@ struct TimelineItemRow: View {
                         .padding(.top, 4)
                 }
 
-                // Task actions if applicable
+                // Enhanced task actions
                 if item.type == .task, let task = item.linkedTask {
-                    HStack(spacing: 12) {
+                    HStack(spacing: 8) {
                         Button(action: { onTaskComplete?(task) }) {
-                            Label(task.isCompleted ? "Completed" : "Complete", systemImage: task.isCompleted ? "checkmark.circle.fill" : "checkmark.circle")
+                            HStack(spacing: 4) {
+                                Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 14))
+                                Text(task.isCompleted ? "Completed" : "Mark complete")
+                            }
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(
+                                task.isCompleted ? Color.secondary.opacity(0.1) : Color.green.opacity(0.1),
+                                in: Capsule()
+                            )
+                            .foregroundStyle(task.isCompleted ? Color.secondary : Color.green)
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(task.isCompleted ? Color.secondary : Color.green)
                         .disabled(task.isCompleted)
 
                         Menu {
@@ -548,28 +582,30 @@ struct TimelineItemRow: View {
                             Button("Tomorrow morning") { onSnooze?(task) }
                             Button("Next week") { onSnooze?(task) }
                         } label: {
-                            Label("Snooze", systemImage: "clock")
+                            HStack(spacing: 4) {
+                                Image(systemName: "clock")
+                                    .font(.system(size: 12))
+                                Text("Snooze")
+                            }
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.orange.opacity(0.1), in: Capsule())
+                            .foregroundStyle(.orange)
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(.orange)
                     }
-                    .font(.caption)
                     .padding(.top, 4)
                 }
 
-                // Note actions
+                // Enhanced note actions
                 if item.type == .note {
-                    HStack(spacing: 12) {
-                        Button(action: {
+                    HStack(spacing: 8) {
+                        ActionButton(icon: "link", label: "Link to event") {
                             // Show link to event picker
-                            // For now, this would open a sheet to select an event
-                        }) {
-                            Label("Link to event", systemImage: "link")
                         }
-                        Button(action: {
+                        ActionButton(icon: "checklist", label: "Create task") {
                             onCreateTask?(item)
-                        }) {
-                            Label("Create task", systemImage: "checklist")
                         }
                         Menu {
                             ForEach(appState.workspace.folders) { folder in
@@ -582,19 +618,67 @@ struct TimelineItemRow: View {
                                 // Create new folder with this note
                             }
                         } label: {
-                            Label("Move to folder", systemImage: "folder")
+                            HStack(spacing: 4) {
+                                Image(systemName: "folder")
+                                    .font(.system(size: 12))
+                                Text("Move")
+                            }
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Color.secondary.opacity(0.1), in: Capsule())
+                            .foregroundStyle(.secondary)
                         }
+                        .buttonStyle(.plain)
                     }
-                    .font(.caption)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
                     .padding(.top, 4)
                 }
             }
-            .padding(.vertical, 8)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(isHovered ? Color.primary.opacity(0.03) : .clear)
+            )
         }
         .padding(.horizontal)
         .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
+        .onAppear {
+            if item.isProcessing {
+                withAnimation(.easeOut(duration: 1.2).repeatForever(autoreverses: false)) {
+                    pulsePhase = true
+                }
+            }
+        }
+    }
+}
+
+// Small action button for timeline items
+private struct ActionButton: View {
+    let icon: String
+    let label: String
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.system(size: 12))
+                Text(label)
+            }
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                isHovered ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.1),
+                in: Capsule()
+            )
+            .foregroundStyle(isHovered ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -602,64 +686,144 @@ struct TimelineItemRow: View {
 
 struct EventCard: View {
     let event: EventDetails
+    @State private var isHovered = false
+    @State private var showNoteInput = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(event.title)
-                    .font(.subheadline.weight(.semibold))
-
-                Spacer()
-
-                Text(event.timeRange)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+        VStack(alignment: .leading, spacing: 10) {
+            eventHeader
 
             if !event.attendees.isEmpty {
-                HStack(spacing: -6) {
-                    ForEach(event.attendees.prefix(3), id: \.self) { attendee in
-                        Circle()
-                            .fill(Color.accentColor.opacity(0.2))
-                            .frame(width: 24, height: 24)
-                            .overlay {
-                                Text(String(attendee.prefix(1)))
-                                    .font(.caption2.weight(.medium))
-                            }
-                    }
-                    if event.attendees.count > 3 {
-                        Text("+\(event.attendees.count - 3)")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .padding(.leading, 8)
-                    }
-                }
+                attendeesSection
             }
 
             if let notes = event.notes, !notes.isEmpty {
-                Text(notes)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                notesSection(notes)
             }
 
-            // Quick note input for this event
-            HStack {
-                Image(systemName: "plus.bubble")
-                    .foregroundStyle(.secondary)
-                Text("Add note to this event...")
-                    .foregroundStyle(.tertiary)
-            }
-            .font(.caption)
-            .padding(8)
-            .background(Color(.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            Divider().opacity(0.5)
+
+            addNoteButton
         }
-        .padding(12)
-        .background(event.color.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(event.color.opacity(0.3), lineWidth: 1)
-        )
+        .padding(14)
+        .background(cardBackground)
+        .overlay(cardBorder)
+        .shadow(color: cardShadowColor, radius: cardShadowRadius, y: 2)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
+        .onHover { isHovered = $0 }
+    }
+
+    private var eventHeader: some View {
+        HStack(alignment: .top) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(event.color)
+                .frame(width: 3, height: 20)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(event.title)
+                    .font(.subheadline.weight(.semibold))
+
+                HStack(spacing: 6) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 10))
+                    Text(event.timeRange)
+                        .font(.caption)
+                }
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var attendeesSection: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "person.2")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+
+            HStack(spacing: -8) {
+                ForEach(event.attendees.prefix(3), id: \.self) { attendee in
+                    attendeeBubble(attendee)
+                }
+                if event.attendees.count > 3 {
+                    Text("+\(event.attendees.count - 3)")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 12)
+                }
+            }
+        }
+    }
+
+    private func attendeeBubble(_ attendee: String) -> some View {
+        ZStack {
+            Circle()
+                .fill(event.color.opacity(0.2))
+                .frame(width: 24, height: 24)
+
+            Circle()
+                .stroke(Color(.controlBackgroundColor), lineWidth: 2)
+                .frame(width: 24, height: 24)
+
+            Text(String(attendee.prefix(1)))
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(event.color)
+        }
+    }
+
+    private func notesSection(_ notes: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "note.text")
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .padding(.top, 2)
+
+            Text(notes)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+    }
+
+    private var addNoteButton: some View {
+        Button(action: { showNoteInput = true }) {
+            HStack(spacing: 6) {
+                Image(systemName: "plus.bubble")
+                    .font(.system(size: 12))
+                Text("Add note to this event...")
+                    .font(.caption)
+            }
+            .foregroundStyle(isHovered ? event.color : Color.secondary.opacity(0.6))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isHovered ? event.color.opacity(0.08) : Color(.controlBackgroundColor))
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var cardBackground: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .fill(event.color.opacity(0.06))
+    }
+
+    private var cardBorder: some View {
+        RoundedRectangle(cornerRadius: 12)
+            .stroke(
+                isHovered ? event.color.opacity(0.4) : event.color.opacity(0.2),
+                lineWidth: isHovered ? 1.5 : 1
+            )
+    }
+
+    private var cardShadowColor: Color {
+        isHovered ? event.color.opacity(0.1) : .clear
+    }
+
+    private var cardShadowRadius: CGFloat {
+        isHovered ? 8 : 0
     }
 }
 

@@ -191,20 +191,35 @@ struct StatusCard: View {
     let icon: String
     let color: Color
 
+    @State private var isHovered = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Image(systemName: icon)
-                    .font(.title2)
-                    .foregroundStyle(color)
+                // Icon with subtle glow
+                ZStack {
+                    Circle()
+                        .fill(color.opacity(0.15))
+                        .frame(width: 36, height: 36)
+
+                    Image(systemName: icon)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(color)
+                }
 
                 Spacer()
+
+                // Subtle trend indicator
+                Image(systemName: "arrow.up.right")
+                    .font(.caption2)
+                    .foregroundStyle(color.opacity(isHovered ? 0.8 : 0.4))
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(value)
-                    .font(.title)
-                    .fontWeight(.semibold)
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .foregroundStyle(.primary)
+                    .contentTransition(.numericText())
 
                 Text(title)
                     .font(.subheadline)
@@ -212,8 +227,25 @@ struct StatusCard: View {
             }
         }
         .padding()
-        .background(.background.secondary)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(
+                    isHovered ? color.opacity(0.25) : Color.primary.opacity(0.06),
+                    lineWidth: 1
+                )
+        )
+        .shadow(
+            color: isHovered ? color.opacity(0.15) : .black.opacity(0.05),
+            radius: isHovered ? 12 : 6,
+            y: isHovered ? 4 : 2
+        )
+        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
+        .onHover { isHovered = $0 }
     }
 }
 
@@ -225,9 +257,27 @@ struct DashboardSection<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: icon)
-                .font(.headline)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                // Icon with subtle background
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.accentColor.opacity(0.1))
+                        .frame(width: 26, height: 26)
+
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+
+                Text(title)
+                    .font(.headline)
+
+                // Subtle line separator
+                Rectangle()
+                    .fill(Color.primary.opacity(0.06))
+                    .frame(height: 1)
+            }
 
             content()
         }
@@ -241,46 +291,77 @@ struct ApprovalCard: View {
     @EnvironmentObject private var appState: AppState
     @State private var showDenyDialog = false
     @State private var denyReason = ""
+    @State private var isHovered = false
+    @State private var pulseRisk = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
-            // Risk indicator
-            RiskBadge(level: approval.riskLevel)
+            // Enhanced risk indicator with pulse for high/critical
+            ZStack {
+                if approval.riskLevel == .high || approval.riskLevel == .critical {
+                    Circle()
+                        .fill(riskColor.opacity(0.2))
+                        .frame(width: 56, height: 56)
+                        .scaleEffect(pulseRisk ? 1.2 : 1.0)
+                        .opacity(pulseRisk ? 0 : 0.6)
+                }
+
+                RiskBadge(level: approval.riskLevel)
+            }
 
             // Details
-            VStack(alignment: .leading, spacing: 4) {
-                Text(approval.toolName)
-                    .font(.headline)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text(approval.toolName)
+                        .font(.headline)
+
+                    Spacer()
+
+                    Text("Just now")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
 
                 Text(approval.description)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
 
                 if !approval.parameters.isEmpty {
-                    HStack {
-                        ForEach(Array(approval.parameters.prefix(2)), id: \.key) { key, value in
-                            Text("\(key): \(value)")
-                                .font(.caption)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(.quaternary)
-                                .clipShape(Capsule())
+                    HStack(spacing: 6) {
+                        ForEach(Array(approval.parameters.prefix(3)), id: \.key) { key, value in
+                            HStack(spacing: 4) {
+                                Text(key)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                Text(value)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.primary.opacity(0.05), in: Capsule())
                         }
                     }
+                    .padding(.top, 2)
                 }
             }
 
-            Spacer()
+            Spacer(minLength: 16)
 
-            // Actions
+            // Enhanced action buttons
             VStack(spacing: 8) {
                 Button {
                     Task {
                         await appState.approveRequest(approval)
                     }
                 } label: {
-                    Text("Approve")
-                        .frame(width: 80)
+                    HStack(spacing: 4) {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 11, weight: .bold))
+                        Text("Approve")
+                    }
+                    .frame(width: 90)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.green)
@@ -288,8 +369,12 @@ struct ApprovalCard: View {
                 Button {
                     showDenyDialog = true
                 } label: {
-                    Text("Deny")
-                        .frame(width: 80)
+                    HStack(spacing: 4) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10, weight: .bold))
+                        Text("Deny")
+                    }
+                    .frame(width: 90)
                 }
                 .buttonStyle(.bordered)
             }
@@ -309,8 +394,40 @@ struct ApprovalCard: View {
             }
         }
         .padding()
-        .background(.background.secondary)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(
+                    isHovered ? riskColor.opacity(0.3) : Color.primary.opacity(0.06),
+                    lineWidth: isHovered ? 1.5 : 1
+                )
+        )
+        .shadow(
+            color: isHovered ? riskColor.opacity(0.12) : .black.opacity(0.05),
+            radius: isHovered ? 10 : 5,
+            y: isHovered ? 4 : 2
+        )
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
+        .onHover { isHovered = $0 }
+        .onAppear {
+            if approval.riskLevel == .high || approval.riskLevel == .critical {
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: false)) {
+                    pulseRisk = true
+                }
+            }
+        }
+    }
+
+    private var riskColor: Color {
+        switch approval.riskLevel {
+        case .low: return .green
+        case .medium: return .yellow
+        case .high: return .orange
+        case .critical: return .red
+        }
     }
 }
 
@@ -354,32 +471,62 @@ struct RiskBadge: View {
 
 struct ActivityRow: View {
     let task: TaskInfo
+    @State private var isHovered = false
 
     var body: some View {
-        HStack {
-            stateIcon
-                .frame(width: 24)
+        HStack(spacing: 12) {
+            // Enhanced state icon
+            ZStack {
+                Circle()
+                    .fill(stateColor.opacity(0.12))
+                    .frame(width: 32, height: 32)
 
-            VStack(alignment: .leading, spacing: 2) {
+                stateIcon
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
                 Text(task.prompt)
+                    .font(.subheadline.weight(.medium))
                     .lineLimit(1)
+                    .foregroundStyle(.primary)
 
-                Text(task.createdAt, style: .relative)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+
+                    Text(task.createdAt, style: .relative)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()
 
-            Text(task.state.rawValue)
-                .font(.caption)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(stateColor.opacity(0.1))
-                .foregroundStyle(stateColor)
-                .clipShape(Capsule())
+            // Enhanced state badge
+            HStack(spacing: 4) {
+                if task.state == .working {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 10, height: 10)
+                }
+
+                Text(stateLabel)
+                    .font(.caption.weight(.medium))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(stateColor.opacity(0.1), in: Capsule())
+            .foregroundStyle(stateColor)
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(isHovered ? Color.primary.opacity(0.04) : .clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { isHovered = $0 }
     }
 
     @ViewBuilder
@@ -387,19 +534,33 @@ struct ActivityRow: View {
         switch task.state {
         case .working:
             ProgressView()
-                .scaleEffect(0.7)
+                .scaleEffect(0.6)
         case .completed:
-            Image(systemName: "checkmark.circle.fill")
+            Image(systemName: "checkmark")
+                .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.green)
         case .failed:
-            Image(systemName: "xmark.circle.fill")
+            Image(systemName: "xmark")
+                .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.red)
         case .inputRequired:
-            Image(systemName: "questionmark.circle.fill")
+            Image(systemName: "questionmark")
+                .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(.orange)
         default:
             Image(systemName: "circle")
+                .font(.system(size: 10))
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private var stateLabel: String {
+        switch task.state {
+        case .completed: return "Done"
+        case .failed: return "Failed"
+        case .working: return "Running"
+        case .inputRequired: return "Input needed"
+        default: return task.state.rawValue
         }
     }
 
@@ -475,38 +636,52 @@ struct AgentMessage: Identifiable {
 struct AgentActivityCard: View {
     let agent: AgentActivity
     @State private var isExpanded = false
+    @State private var isHovered = false
+    @State private var pulseAnimation = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Header
             HStack {
-                // Animated status indicator
+                // Animated status indicator with pulse
                 ZStack {
+                    // Pulse ring for working state
+                    if agent.status == .working {
+                        Circle()
+                            .stroke(statusColor.opacity(0.3), lineWidth: 2)
+                            .frame(width: 44, height: 44)
+                            .scaleEffect(pulseAnimation ? 1.4 : 1.0)
+                            .opacity(pulseAnimation ? 0 : 0.8)
+                    }
+
                     Circle()
-                        .fill(statusColor.opacity(0.2))
+                        .fill(statusColor.opacity(0.15))
                         .frame(width: 40, height: 40)
 
                     if agent.status == .working {
+                        // Spinning arc indicator
                         Circle()
-                            .stroke(statusColor, lineWidth: 2)
+                            .trim(from: 0, to: 0.3)
+                            .stroke(statusColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                             .frame(width: 40, height: 40)
-                            .rotationEffect(.degrees(isExpanded ? 360 : 0))
-                            .animation(.linear(duration: 2).repeatForever(autoreverses: false), value: isExpanded)
+                            .rotationEffect(.degrees(pulseAnimation ? 360 : 0))
                     }
 
                     Image(systemName: agent.isLocal ? "laptopcomputer" : "desktopcomputer")
+                        .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(statusColor)
                 }
 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack {
+                    HStack(spacing: 6) {
                         Text(agent.name)
                             .font(.headline)
 
                         if agent.status == .working {
-                            ProgressView()
-                                .scaleEffect(0.5)
-                                .frame(width: 12, height: 12)
+                            Text("●")
+                                .font(.system(size: 8))
+                                .foregroundStyle(statusColor)
+                                .opacity(pulseAnimation ? 1 : 0.3)
                         }
                     }
 
@@ -517,79 +692,179 @@ struct AgentActivityCard: View {
 
                 Spacer()
 
+                // Status badge
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(statusColor)
+                        .frame(width: 6, height: 6)
+                    Text(agent.status == .working ? "Active" : "Ready")
+                        .font(.caption2.weight(.medium))
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(statusColor.opacity(0.1), in: Capsule())
+
                 // Expand button
-                Button(action: { withAnimation { isExpanded.toggle() } }) {
+                Button(action: { withAnimation(.spring(response: 0.3)) { isExpanded.toggle() } }) {
                     Image(systemName: "chevron.down")
+                        .font(.system(size: 12, weight: .semibold))
                         .rotationEffect(.degrees(isExpanded ? 180 : 0))
                         .foregroundStyle(.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(
+                            Circle()
+                                .fill(Color.primary.opacity(isHovered ? 0.08 : 0))
+                        )
                 }
                 .buttonStyle(.plain)
             }
 
-            // Current task
+            // Current task with better styling
             if let task = agent.currentTask {
-                HStack(alignment: .top) {
-                    Image(systemName: "arrow.right.circle")
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "arrow.right.circle.fill")
+                        .font(.system(size: 14))
                         .foregroundStyle(.blue)
+
                     Text(task)
                         .font(.subheadline)
                         .lineLimit(2)
+                        .foregroundStyle(.primary.opacity(0.9))
                 }
-                .padding(10)
+                .padding(12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.blue.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(.blue.opacity(0.06))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(.blue.opacity(0.15), lineWidth: 1)
+                        )
+                )
             }
 
-            // Progress bar
+            // Enhanced progress bar
             if let progress = agent.progressPercent {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
                     GeometryReader { geo in
                         ZStack(alignment: .leading) {
-                            Rectangle()
-                                .fill(Color.secondary.opacity(0.2))
-                                .frame(height: 4)
+                            // Track
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.secondary.opacity(0.15))
+                                .frame(height: 6)
 
-                            Rectangle()
-                                .fill(statusColor)
-                                .frame(width: geo.size.width * progress, height: 4)
+                            // Progress fill with gradient
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [statusColor, statusColor.opacity(0.7)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .frame(width: geo.size.width * progress, height: 6)
+
+                            // Shimmer effect on progress
+                            if agent.status == .working {
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [.clear, .white.opacity(0.3), .clear],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .frame(width: 40, height: 6)
+                                    .offset(x: pulseAnimation ? geo.size.width * progress : -40)
+                            }
                         }
-                        .clipShape(Capsule())
                     }
-                    .frame(height: 4)
+                    .frame(height: 6)
 
-                    Text("\(Int(progress * 100))% complete")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text("\(Int(progress * 100))% complete")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        if agent.status == .working {
+                            Text("In progress...")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
                 }
             }
 
-            // Recent actions (expanded)
+            // Recent actions (expanded) with better animation
             if isExpanded && !agent.recentActions.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Recent Actions")
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Recent Actions")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
 
-                    ForEach(agent.recentActions, id: \.self) { action in
-                        HStack(spacing: 8) {
-                            Circle()
-                                .fill(Color.secondary)
-                                .frame(width: 4, height: 4)
+                        Spacer()
+
+                        Text("\(agent.recentActions.count) items")
+                            .font(.caption2)
+                            .foregroundStyle(.quaternary)
+                    }
+
+                    ForEach(Array(agent.recentActions.enumerated()), id: \.offset) { index, action in
+                        HStack(spacing: 10) {
+                            ZStack {
+                                Circle()
+                                    .fill(Color.secondary.opacity(0.1))
+                                    .frame(width: 18, height: 18)
+
+                                Text("\(index + 1)")
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(.secondary)
+                            }
+
                             Text(action)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+
+                            Spacer()
                         }
+                        .transition(.asymmetric(
+                            insertion: .move(edge: .top).combined(with: .opacity),
+                            removal: .opacity
+                        ))
                     }
                 }
                 .padding(.top, 4)
             }
         }
         .padding()
-        .background(.background.secondary)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .onAppear { isExpanded = true }
+        .background(
+            RoundedRectangle(cornerRadius: 14)
+                .fill(Color(.controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(
+                    isHovered ? statusColor.opacity(0.2) : Color.primary.opacity(0.06),
+                    lineWidth: 1
+                )
+        )
+        .shadow(
+            color: .black.opacity(isHovered ? 0.08 : 0.04),
+            radius: isHovered ? 10 : 5,
+            y: isHovered ? 4 : 2
+        )
+        .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
+        .onHover { isHovered = $0 }
+        .onAppear {
+            isExpanded = true
+            // Start animations
+            withAnimation(.linear(duration: 1.5).repeatForever(autoreverses: false)) {
+                pulseAnimation = true
+            }
+        }
     }
 
     private var statusColor: Color {

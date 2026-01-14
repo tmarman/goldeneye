@@ -69,10 +69,24 @@ struct AgentKitConsoleApp: App {
                 .environmentObject(appState)
         }
         .menuBarExtraStyle(.window)
-
-        Settings {
-            SettingsView()
-                .environmentObject(appState)
+        .commands {
+            // Add Settings menu item that navigates to inline settings
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    NotificationCenter.default.post(name: .openSettings, object: nil)
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
+
+        // Settings are now inline in the main window (accessed via sidebar)
+        // No separate Settings window - Cmd+, navigates to settings in sidebar
     }
 }
+
+// MARK: - Notification Names
+
+extension Notification.Name {
+    static let openSettings = Notification.Name("openSettings")
+}
+
