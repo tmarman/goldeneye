@@ -106,7 +106,14 @@ struct DocumentEditorView: View {
                 onMoveUp: index > 0 ? { withAnimation(.liquidGlass) { moveBlock(from: index, to: index - 1) } } : nil,
                 onMoveDown: index < document.blocks.count - 1 ? { withAnimation(.liquidGlass) { moveBlock(from: index, to: index + 1) } } : nil,
                 onDuplicate: { withAnimation(.liquidGlass) { duplicateBlock(at: index) } },
-                onTurnInto: { type in withAnimation(.liquidGlass) { turnBlockInto(at: index, type: type) } }
+                onTurnInto: { type in withAnimation(.liquidGlass) { turnBlockInto(at: index, type: type) } },
+                onNewBlockAfter: { insertBlock(type: .text, at: index + 1) },
+                onReorder: { fromIndex in
+                    withAnimation(.liquidGlass) {
+                        moveBlock(from: fromIndex, to: fromIndex < index ? index : index)
+                    }
+                },
+                index: index
             )
             .transition(.asymmetric(
                 insertion: .opacity.combined(with: .scale(scale: 0.95)).combined(with: .offset(y: -8)),
@@ -336,8 +343,13 @@ struct BlockRow: View {
     let onMoveDown: (() -> Void)?
     let onDuplicate: () -> Void
     let onTurnInto: (BlockType) -> Void
+    var onNewBlockAfter: (() -> Void)? = nil
+    var onReorder: ((Int) -> Void)? = nil
+    let index: Int
 
     @State private var isHovered = false
+    @State private var isDragging = false
+    @State private var isDropTarget = false
 
     var body: some View {
         HStack(alignment: .top, spacing: EditorTokens.Spacing.blockHorizontal) {
@@ -353,13 +365,57 @@ struct BlockRow: View {
             )
 
             // Block content
-            BlockContentView(block: $block, documentId: documentId, isFocused: isFocused)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            BlockContentView(
+                block: $block,
+                documentId: documentId,
+                isFocused: isFocused,
+                onNewBlockAfter: onNewBlockAfter,
+                onDeleteIfEmpty: { if case .text(let t) = block, t.content.isEmpty { onDelete() } }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .editorBlock(isHovered: isHovered, isFocused: isFocused)
+        .overlay(alignment: .top) {
+            if isDropTarget {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(height: 2)
+                    .offset(y: -4)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture { onFocus() }
         .onHover { isHovered = $0 }
+        .opacity(isDragging ? 0.5 : 1)
+        .draggable(BlockDragData(blockId: block.id.rawValue, index: index)) {
+            // Drag preview
+            HStack(spacing: 8) {
+                Image(systemName: block.iconName)
+                    .foregroundStyle(.secondary)
+                Text(block.previewText.prefix(40) + (block.previewText.count > 40 ? "..." : ""))
+                    .lineLimit(1)
+            }
+            .padding(8)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .dropDestination(for: BlockDragData.self) { items, _ in
+            guard let dragData = items.first,
+                  dragData.index != index else { return false }
+            onReorder?(dragData.index)
+            return true
+        } isTargeted: { targeted in
+            isDropTarget = targeted
+        }
+    }
+}
+
+/// Drag data for block reordering
+struct BlockDragData: Codable, Transferable {
+    let blockId: String
+    let index: Int
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .data)
     }
 }
 
@@ -458,6 +514,8 @@ struct BlockContentView: View {
     @Binding var block: Block
     let documentId: DocumentID
     let isFocused: Bool
+    var onNewBlockAfter: (() -> Void)? = nil
+    var onDeleteIfEmpty: (() -> Void)? = nil
 
     var body: some View {
         switch block {
@@ -467,7 +525,9 @@ struct BlockContentView: View {
                 isFocused: isFocused,
                 onConvertBlock: { type in
                     block = type.createBlock()
-                }
+                },
+                onNewBlockAfter: onNewBlockAfter,
+                onDeleteIfEmpty: onDeleteIfEmpty
             )
         case .heading(let headingBlock):
             HeadingBlockView(block: binding(for: headingBlock), isFocused: isFocused)
@@ -530,8 +590,11 @@ struct TextBlockView: View {
     @Binding var block: TextBlock
     let isFocused: Bool
     var onConvertBlock: ((BlockType) -> Void)? = nil
+    var onNewBlockAfter: (() -> Void)? = nil
+    var onDeleteIfEmpty: (() -> Void)? = nil
 
     @State private var showSlashMenu = false
+    @State private var previousContent = ""
 
     /// Extract the slash command query (text after "/")
     private var slashQuery: String? {
@@ -545,8 +608,20 @@ struct TextBlockView: View {
                 .textFieldStyle(.plain)
                 .font(block.style.font)
                 .lineLimit(1...100)
-                .onChange(of: block.content) { _, newValue in
+                .onChange(of: block.content) { oldValue, newValue in
                     showSlashMenu = newValue.hasPrefix("/")
+
+                    // Detect backspace on empty block
+                    if newValue.isEmpty && oldValue.isEmpty {
+                        onDeleteIfEmpty?()
+                    }
+                    previousContent = newValue
+                }
+                .onSubmit {
+                    // Enter key creates new block after
+                    if !showSlashMenu {
+                        onNewBlockAfter?()
+                    }
                 }
 
             // Slash command menu appears below the text field

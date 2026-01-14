@@ -867,11 +867,44 @@ struct FlowLayout: Layout {
     }
 }
 
-// MARK: - Legacy Modal Settings View (kept for compatibility)
+// MARK: - Settings Window (for ⌘, Preferences)
 
 struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+
     var body: some View {
-        SettingsDetailView()
-            .frame(width: 800, height: 600)
+        TabView {
+            GeneralSettingsContent()
+                .tabItem {
+                    Label("General", systemImage: "gear")
+                }
+                .tag(SettingsCategory.general)
+
+            LLMSettingsContent()
+                .tabItem {
+                    Label("LLM", systemImage: "cpu")
+                }
+                .tag(SettingsCategory.llm)
+
+            ServerSettingsContent()
+                .tabItem {
+                    Label("Server", systemImage: "server.rack")
+                }
+                .tag(SettingsCategory.server)
+
+            ApprovalSettingsContent()
+                .tabItem {
+                    Label("Approvals", systemImage: "checkmark.shield")
+                }
+                .tag(SettingsCategory.approvals)
+
+            AdvancedSettingsContent()
+                .tabItem {
+                    Label("Advanced", systemImage: "gearshape.2")
+                }
+                .tag(SettingsCategory.advanced)
+        }
+        .padding(20)
+        .frame(width: 550, height: 450)
     }
 }
