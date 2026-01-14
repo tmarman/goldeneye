@@ -120,20 +120,19 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .toolbar(removing: .sidebarToggle) // We'll add our own
-        .toolbar {
-            // Sidebar toggle button (Notes style)
-            ToolbarItem(placement: .navigation) {
+        .toolbar(removing: .sidebarToggle) // Remove default toggle
+        .safeAreaInset(edge: .top) {
+            // Compact header with title, collapse button, and actions
+            HStack(spacing: 12) {
+                // Sidebar collapse button
                 Button(action: toggleSidebar) {
                     Image(systemName: "sidebar.left")
+                        .font(.title3)
                         .foregroundStyle(.secondary)
                 }
+                .buttonStyle(.plain)
                 .help("Toggle Sidebar")
-            }
-        }
-        .safeAreaInset(edge: .top) {
-            // Compact header with title and actions
-            HStack {
+
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Goldeneye")
                         .font(.headline)

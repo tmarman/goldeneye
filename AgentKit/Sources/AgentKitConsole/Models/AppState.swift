@@ -1055,13 +1055,10 @@ public final class AppState: ObservableObject {
             }
         }
 
-        // Sort by timestamp
-        timelineItems = allItems.sorted { $0.timestamp < $1.timestamp }
+        // Sort by timestamp (most recent first)
+        timelineItems = allItems.sorted { $0.timestamp > $1.timestamp }
 
-        // Add sample items only if completely empty
-        if timelineItems.isEmpty {
-            setupSampleTimelineItems()
-        }
+        // No demo data fallback - show empty state if no real data
     }
 
     private func formatProcessingResult(_ result: ProcessingResult) -> String {
@@ -1168,49 +1165,6 @@ public final class AppState: ObservableObject {
         let formatter = DateFormatter()
         formatter.dateFormat = "h:mm a"
         return "\(formatter.string(from: event.startTime)) - \(formatter.string(from: event.endTime))"
-    }
-
-    private func setupSampleTimelineItems() {
-        // Add sample items for development
-        let today = Date()
-        let calendar = Calendar.current
-
-        timelineItems = [
-            TimelineItemViewModel(
-                id: UUID(),
-                type: .event,
-                title: "Team Standup",
-                subtitle: "Daily sync with engineering team",
-                timestamp: calendar.date(bySettingHour: 10, minute: 0, second: 0, of: today)!,
-                icon: "video",
-                iconColor: .blue,
-                eventDetails: EventDetails(
-                    title: "Team Standup",
-                    timeRange: "10:00 AM - 10:30 AM",
-                    attendees: ["Alice", "Bob", "Carol"],
-                    notes: "Discuss Q1 priorities",
-                    color: .blue
-                )
-            ),
-            TimelineItemViewModel(
-                id: UUID(),
-                type: .task,
-                title: "Review PR #123",
-                subtitle: "From Code Space • Assigned by Technical Agent",
-                timestamp: calendar.date(bySettingHour: 11, minute: 30, second: 0, of: today)!,
-                icon: "checklist",
-                iconColor: .orange
-            ),
-            TimelineItemViewModel(
-                id: UUID(),
-                type: .activity,
-                title: "Research Agent completed literature review",
-                subtitle: "3 documents added to Research Space",
-                timestamp: calendar.date(bySettingHour: 9, minute: 15, second: 0, of: today)!,
-                icon: "sparkles",
-                iconColor: .purple
-            )
-        ]
     }
 
     // MARK: - Decision Card Operations

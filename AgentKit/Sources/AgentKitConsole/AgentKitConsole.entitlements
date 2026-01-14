@@ -4,7 +4,41 @@
 <dict>
     <key>com.apple.security.app-sandbox</key>
     <false/>
+
+    <!-- Calendar & Reminders -->
     <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+
+    <!-- Contacts -->
+    <key>com.apple.security.personal-information.addressbook</key>
+    <true/>
+
+    <!-- Photos/Media Library -->
+    <key>com.apple.security.personal-information.photos-library</key>
+    <true/>
+
+    <!-- Location Services (for location-based reminders) -->
+    <key>com.apple.security.personal-information.location</key>
+    <true/>
+
+    <!-- Microphone (for voice transcription) -->
+    <key>com.apple.security.device.microphone</key>
+    <true/>
+
+    <!-- Camera (for document scanning) -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+
+    <!-- Network access (for API calls, web fetch) -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.network.server</key>
+    <true/>
+
+    <!-- File access (for document imports/exports) -->
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+    <key>com.apple.security.files.downloads.read-write</key>
     <true/>
 </dict>
 </plist>

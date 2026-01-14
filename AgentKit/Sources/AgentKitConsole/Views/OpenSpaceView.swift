@@ -188,21 +188,23 @@ struct OpenSpaceView: View {
 
     @ViewBuilder
     private var captureTextArea: some View {
-        TextEditor(text: $quickInput)
-            .font(.body)
-            .scrollContentBackground(.hidden)
-            .background(Color.clear)
-            .frame(minHeight: 100, maxHeight: 200)
-            .focused($isInputFocused)
-            .overlay(alignment: .topLeading) {
-                if quickInput.isEmpty {
-                    Text(capturePlaceholder)
-                        .foregroundStyle(.tertiary)
-                        .allowsHitTesting(false)
-                        .padding(.top, 8)
-                        .padding(.leading, 5)
-                }
+        ZStack(alignment: .topLeading) {
+            if quickInput.isEmpty {
+                Text(capturePlaceholder)
+                    .font(.body)
+                    .foregroundStyle(.tertiary)
+                    .allowsHitTesting(false)
+                    .padding(.horizontal, 5)
+                    .padding(.top, 8)
             }
+
+            TextEditor(text: $quickInput)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+                .frame(minHeight: 100, maxHeight: 200)
+                .focused($isInputFocused)
+        }
     }
 
     @ViewBuilder
