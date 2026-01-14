@@ -14,11 +14,15 @@ public struct MemoryItem: Identifiable, Codable, Sendable {
     public let createdAt: Date
     public var lastAccessedAt: Date
 
+    /// Vector embedding for semantic search (optional until generated)
+    public var embedding: [Float]?
+
     public init(
         id: MemoryItemID = MemoryItemID(),
         content: String,
         source: MemorySource,
-        metadata: MemoryMetadata = MemoryMetadata()
+        metadata: MemoryMetadata = MemoryMetadata(),
+        embedding: [Float]? = nil
     ) {
         self.id = id
         self.content = content
@@ -26,6 +30,7 @@ public struct MemoryItem: Identifiable, Codable, Sendable {
         self.metadata = metadata
         self.createdAt = Date()
         self.lastAccessedAt = Date()
+        self.embedding = embedding
     }
 }
 

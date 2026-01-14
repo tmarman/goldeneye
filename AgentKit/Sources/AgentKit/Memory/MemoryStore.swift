@@ -14,21 +14,16 @@ import Foundation
 ///                                  SyncManager → Master Server (optional)
 /// ```
 ///
-/// Note: VecturaKit integration is stubbed for now. When integrating:
-/// - Add `import VecturaKit`
-/// - Initialize with proper VecturaKit configuration
-/// - Replace stub implementations with actual vector operations
+/// Note: Vector search now implemented with embeddings
 public actor MemoryStore {
     // MARK: - Properties
-
-    // VecturaKit will be integrated here:
-    // private var vectorDB: VecturaKit?
 
     private let config: MemoryStoreConfig
     private let chunker: ContentChunker
     private var syncManager: MemorySyncManager?
+    private let embeddingProvider: EmbeddingProvider
 
-    /// Local metadata cache (stores all item data including embeddings placeholder)
+    /// Local metadata cache (stores all item data including embeddings)
     private var itemMetadata: [MemoryItemID: MemoryItem] = [:]
 
     /// Path to local storage
@@ -36,9 +31,15 @@ public actor MemoryStore {
 
     // MARK: - Initialization
 
-    public init(config: MemoryStoreConfig = .default) async throws {
+    public init(
+        config: MemoryStoreConfig = .default,
+        embeddingProvider: EmbeddingProvider? = nil
+    ) async throws {
         self.config = config
         self.chunker = ContentChunker(strategy: config.chunkingStrategy)
+
+        // Use provided embedding provider or create default
+        self.embeddingProvider = embeddingProvider ?? SimpleEmbeddingProvider()
 
         // Set up storage path
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -46,8 +47,9 @@ public actor MemoryStore {
 
         try FileManager.default.createDirectory(at: storagePath, withIntermediateDirectories: true)
 
-        // TODO: Initialize VecturaKit when API is finalized
-        // VecturaKit requires proper embedder configuration
+        // Print embedding provider info
+        let dimensions = await self.embeddingProvider.dimensions
+        print("✅ MemoryStore initialized with embeddings (\(dimensions) dimensions)")
 
         // Load metadata from disk
         await loadMetadata()
@@ -148,14 +150,19 @@ public actor MemoryStore {
 
     /// Add a memory item to the store
     public func addItem(_ item: MemoryItem) async throws {
-        // TODO: Add to VecturaKit when integrated
-        // try await vectorDB.addDocument(text: item.content, id: item.id.rawValue)
+        var itemWithEmbedding = item
 
-        // Store metadata locally
-        itemMetadata[item.id] = item
+        // Generate embedding if not already present
+        if itemWithEmbedding.embedding == nil {
+            let embedding = try await embeddingProvider.embed(text: item.content)
+            itemWithEmbedding.embedding = embedding
+        }
+
+        // Store with embedding
+        itemMetadata[itemWithEmbedding.id] = itemWithEmbedding
 
         // Mark for sync
-        await syncManager?.markForSync(item.id)
+        await syncManager?.markForSync(itemWithEmbedding.id)
 
         // Persist metadata periodically
         if itemMetadata.count % 10 == 0 {
@@ -167,12 +174,11 @@ public actor MemoryStore {
     public func search(
         query: String,
         limit: Int = 10,
-        threshold: Float = 0.5,
+        threshold: Float = 0.3,  // Lower threshold for vector similarity (0-1 scale)
         filter: MemoryFilter? = nil
     ) async throws -> [MemorySearchResult] {
-        // TODO: Replace with VecturaKit search when integrated
-        // For now, use simple keyword matching as placeholder
-        let queryWords = Set(query.lowercased().split(separator: " ").map(String.init))
+        // Generate query embedding
+        let queryEmbedding = try await embeddingProvider.embed(text: query)
 
         var searchResults: [MemorySearchResult] = []
 
@@ -182,26 +188,25 @@ public actor MemoryStore {
                 continue
             }
 
-            // Simple keyword scoring (placeholder for vector similarity)
-            let contentWords = Set(item.content.lowercased().split(separator: " ").map(String.init))
-            let overlap = queryWords.intersection(contentWords)
-            let score = Float(overlap.count) / Float(max(queryWords.count, 1))
+            // Skip items without embeddings
+            guard let itemEmbedding = item.embedding else {
+                continue
+            }
+
+            // Calculate cosine similarity
+            let score = VectorOperations.cosineSimilarity(queryEmbedding, itemEmbedding)
 
             if score >= threshold {
                 searchResults.append(MemorySearchResult(
                     id: itemId,
                     item: item,
                     score: score,
-                    matchType: .keyword  // Will be .vector when VecturaKit integrated
+                    matchType: .vector
                 ))
-            }
-
-            if searchResults.count >= limit * 2 {
-                break
             }
         }
 
-        // Sort by score and limit
+        // Sort by score (highest first) and limit results
         searchResults.sort { $0.score > $1.score }
         return Array(searchResults.prefix(limit))
     }
