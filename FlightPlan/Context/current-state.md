@@ -32,7 +32,14 @@ AgentKitConsole is now demo-ready with full UI implementation. Core features wor
 
 ## Recent Session (2026-01-14)
 
-Completed demo polish:
+**Session 2 - UI Polish:**
+1. ✅ Settings → TabView for standard macOS ⌘, prefs pattern
+2. ✅ Document editor → Block drag-drop reordering
+3. ✅ Document editor → Enter key creates new block after current
+4. ✅ Approval flow → Deny dialog with optional reason field
+5. ✅ Audited buttons/sections for functionality
+
+**Session 1 - Demo Ready:**
 1. ✅ Wired up approval flow (approve/deny buttons → AppState)
 2. ✅ Decisions flow already complete with full CRUD
 3. ✅ Added "Getting Started" onboarding card
@@ -44,11 +51,11 @@ Completed demo polish:
 ### Implemented
 - **Dashboard**: Status cards, active agents, conversations, getting started
 - **OpenSpace**: Post-it style capture, EventKit meeting detection, capture modes
-- **Documents**: Block-based editor (Craft-style), save indicator, block actions
+- **Documents**: Block-based editor with drag-drop reordering, slash commands, keyboard nav
 - **Decisions**: Full workflow with filtering, comments, history
 - **Approvals**: Real-time approval/deny with A2A backend
 - **Agents**: Activity visualization, conversation display
-- **Settings**: Server management, Ollama model selection
+- **Settings**: TabView prefs (General, LLM, Server, Approvals, Advanced)
 
 ### Architecture
 ```
@@ -105,9 +112,11 @@ AgentKitConsole/
 ## Next Steps
 
 1. **Testing**: Run full demo flow with live agents
-2. **Polish**: Address any UX issues found in testing
-3. **Documentation**: Update getting-started guide
-4. **F004**: Consider Claude SDK port for enhanced capabilities
+2. **Feature Ideas** (from user feedback):
+   - Reading list auto-import with RAG (vector database like LibreChat)
+   - Agent wrapper for Claude Code/Codex/Gemini as orchestration tools
+   - Chat-based agent config (like Custom GPTs - chat updates config)
+3. **F004**: Consider Claude SDK port for enhanced capabilities
 
 ## Notes for Future Sessions
 
