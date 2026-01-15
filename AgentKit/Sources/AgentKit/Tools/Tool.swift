@@ -35,6 +35,20 @@ extension Tool {
     public func describeAction(_ input: ToolInput) -> String {
         "\(name) with \(input.parameters.count) parameters"
     }
+
+    /// Convert to ToolDefinition for LLM provider
+    public func toDefinition() -> ToolDefinition {
+        ToolDefinition(name: name, description: description, inputSchema: inputSchema)
+    }
+}
+
+// MARK: - Tool Array Extension
+
+extension Array where Element == any Tool {
+    /// Convert array of Tools to ToolDefinitions for LLM providers
+    public func toDefinitions() -> [ToolDefinition] {
+        map { $0.toDefinition() }
+    }
 }
 
 // MARK: - Risk Level

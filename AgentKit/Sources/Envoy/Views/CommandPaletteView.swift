@@ -187,7 +187,7 @@ struct CommandPaletteView: View {
                 subtitle: "Quick capture & timeline",
                 icon: "square.and.pencil",
                 category: "Navigation",
-                action: { appState.selectedSidebarItem = .openSpace; dismiss() }
+                action: { appState.selectedSidebarItem = .headspace; dismiss() }
             ),
             PaletteCommand(
                 id: "nav-documents",

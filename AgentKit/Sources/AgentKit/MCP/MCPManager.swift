@@ -96,6 +96,11 @@ public actor MCPManager {
         Array(connections.values)
     }
 
+    /// Get the number of connections
+    public var connectionCount: Int {
+        connections.count
+    }
+
     // MARK: - Tool Discovery
 
     /// Get all tools from all connected MCP servers

@@ -1,3 +1,4 @@
+import AgentKit
 import AppKit
 import SwiftUI
 
@@ -42,10 +43,12 @@ struct SettingsSidebarItem: View {
 
 enum SettingsCategory: String, CaseIterable, Identifiable {
     case general
-    case llm
+    case models
     case server
     case extensions
+    case integrations
     case approvals
+    case systemHealth
     case advanced
 
     var id: String { rawValue }
@@ -53,10 +56,12 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .general: "General"
-        case .llm: "LLM"
+        case .models: "Models"
         case .server: "Server"
         case .extensions: "Extensions"
+        case .integrations: "Integrations"
         case .approvals: "Approvals"
+        case .systemHealth: "System Health"
         case .advanced: "Advanced"
         }
     }
@@ -64,10 +69,12 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .general: "gear"
-        case .llm: "cpu"
+        case .models: "cube.box"
         case .server: "server.rack"
         case .extensions: "puzzlepiece.extension"
+        case .integrations: "link"
         case .approvals: "checkmark.shield"
+        case .systemHealth: "heart.text.square"
         case .advanced: "gearshape.2"
         }
     }
@@ -81,6 +88,18 @@ struct SettingsDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        content
+            .onAppear {
+                // Navigate to target category if set
+                if let target = appState.targetSettingsCategory,
+                   let category = SettingsCategory(rawValue: target) {
+                    selectedCategory = category
+                    appState.targetSettingsCategory = nil
+                }
+            }
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             // Clean header with title and close button
             HStack(spacing: 16) {
@@ -95,7 +114,7 @@ struct SettingsDetailView: View {
                 Spacer()
 
                 // Close button (Esc or click)
-                Button(action: { appState.selectedSidebarItem = .openSpace }) {
+                Button(action: { appState.selectedSidebarItem = .headspace }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.title2)
                         .foregroundStyle(.secondary)
@@ -150,14 +169,18 @@ struct SettingsDetailView: View {
         switch selectedCategory {
         case .general:
             GeneralSettingsContent()
-        case .llm:
-            LLMSettingsContent()
+        case .models:
+            ModelsSettingsContent()
         case .server:
             ServerSettingsContent()
         case .extensions:
             ExtensionsSettingsContent()
+        case .integrations:
+            IntegrationsSettingsContent()
         case .approvals:
             ApprovalSettingsContent()
+        case .systemHealth:
+            SystemHealthView()
         case .advanced:
             AdvancedSettingsContent()
         }
@@ -269,7 +292,648 @@ struct GeneralSettingsContent: View {
     }
 }
 
-// MARK: - LLM Settings
+// MARK: - Models Settings
+
+/// Unified models settings - everything inline, no popups
+struct ModelsSettingsContent: View {
+    @State private var selectedSection: ModelsSection = .providers
+    @State private var editingProvider: ProviderConfig?
+    @State private var showAddOllamaServer = false
+    @State private var showImportHuggingFace = false
+
+    enum ModelsSection: String, CaseIterable {
+        case providers = "Providers"
+        case onDevice = "On-Device (MLX)"
+
+        var icon: String {
+            switch self {
+            case .providers: return "server.rack"
+            case .onDevice: return "apple.logo"
+            }
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // Section tabs
+            HStack(spacing: 8) {
+                ForEach(ModelsSection.allCases, id: \.self) { section in
+                    Button {
+                        selectedSection = section
+                    } label: {
+                        Label(section.rawValue, systemImage: section.icon)
+                            .font(.subheadline)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(selectedSection == section ? Color.accentColor : Color.secondary.opacity(0.1))
+                            )
+                            .foregroundStyle(selectedSection == section ? .white : .primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Spacer()
+
+                // Import from HuggingFace button (for MLX)
+                if selectedSection == .onDevice {
+                    Button(action: { showImportHuggingFace = true }) {
+                        Label("Import from HuggingFace", systemImage: "square.and.arrow.down")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+
+            Divider()
+
+            // Content based on section
+            switch selectedSection {
+            case .providers:
+                ProvidersSettingsSection(
+                    editingProvider: $editingProvider,
+                    showAddOllamaServer: $showAddOllamaServer
+                )
+            case .onDevice:
+                OnDeviceModelsSection(showImportHuggingFace: $showImportHuggingFace)
+            }
+        }
+        .sheet(item: $editingProvider) { provider in
+            ProviderEditSheet(provider: provider)
+        }
+        .sheet(isPresented: $showAddOllamaServer) {
+            AddOllamaServerSheet()
+        }
+        .sheet(isPresented: $showImportHuggingFace) {
+            HuggingFaceImportSheet()
+        }
+    }
+}
+
+// MARK: - Providers Settings Section
+
+struct ProvidersSettingsSection: View {
+    @Binding var editingProvider: ProviderConfig?
+    @Binding var showAddOllamaServer: Bool
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // Configured providers
+            SettingsCard(title: "Configured Providers", icon: "checkmark.circle") {
+                VStack(spacing: 0) {
+                    // Sample data - would use actual provider manager
+                    ProviderSettingsRow(
+                        name: "Local MLX Models",
+                        icon: "apple.logo",
+                        iconColor: .primary,
+                        subtitle: "Run models locally on Apple Silicon",
+                        modelCount: 1,
+                        isEnabled: true
+                    )
+
+                    Divider().padding(.leading, 44)
+
+                    ProviderSettingsRow(
+                        name: "Ollama",
+                        icon: "hare",
+                        iconColor: .blue,
+                        subtitle: "Local models via Ollama server",
+                        modelCount: 5,
+                        isEnabled: true,
+                        selectedModel: "hf.co/unsloth/GLM-4.7-GGUF:latest",
+                        onConfigure: { /* show config */ }
+                    )
+
+                    Divider().padding(.leading, 44)
+
+                    ProviderSettingsRow(
+                        name: "Anthropic Claude",
+                        icon: "sparkle",
+                        iconColor: .orange,
+                        subtitle: "Claude Sonnet, Opus, Haiku",
+                        isEnabled: false
+                    )
+
+                    Divider().padding(.leading, 44)
+
+                    ProviderSettingsRow(
+                        name: "OpenAI GPT",
+                        icon: "brain",
+                        iconColor: .green,
+                        subtitle: "GPT-4, GPT-3.5, and more",
+                        isEnabled: false
+                    )
+
+                    Divider().padding(.leading, 44)
+
+                    ProviderSettingsRow(
+                        name: "LM Studio",
+                        icon: "desktopcomputer",
+                        iconColor: .purple,
+                        subtitle: "Local models via LM Studio",
+                        isEnabled: true
+                    )
+                }
+            }
+
+            // Add more providers
+            SettingsCard(title: "Add Provider", icon: "plus.circle") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Connect to additional AI services")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 120))], spacing: 12) {
+                        AddProviderButton(name: "Google AI", icon: "globe", color: .blue)
+                        AddProviderButton(name: "OpenRouter", icon: "arrow.triangle.branch", color: .purple)
+                        AddProviderButton(name: "Custom", icon: "server.rack", color: .gray)
+
+                        // Special: Add another Ollama instance
+                        Button(action: { showAddOllamaServer = true }) {
+                            VStack(spacing: 6) {
+                                Image(systemName: "plus.circle")
+                                    .font(.title2)
+                                    .foregroundStyle(.orange)
+                                Text("Add Ollama")
+                                    .font(.caption)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Color.orange.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Add another Ollama server (local or remote)")
+                    }
+                }
+            }
+
+            // Ollama note
+            SettingsCard(title: "About Ollama", icon: "info.circle") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Ollama servers expose all their models. You can add multiple Ollama providers to:")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label("Use different models from the same server", systemImage: "checkmark")
+                        Label("Connect to remote Ollama servers", systemImage: "checkmark")
+                        Label("Separate work and personal models", systemImage: "checkmark")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Provider Settings Row
+
+struct ProviderSettingsRow: View {
+    let name: String
+    let icon: String
+    let iconColor: Color
+    let subtitle: String
+    var modelCount: Int? = nil
+    var isEnabled: Bool = true
+    var selectedModel: String? = nil
+    var onConfigure: (() -> Void)? = nil
+
+    @State private var enabled: Bool = true
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(iconColor)
+                .frame(width: 32)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 8) {
+                    Text(name)
+                        .fontWeight(.medium)
+
+                    if let count = modelCount, count > 0 {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(.green)
+                                .frame(width: 6, height: 6)
+                            Text("\(count) models")
+                                .font(.caption)
+                        }
+                        .foregroundStyle(.green)
+                    }
+                }
+
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let model = selectedModel {
+                    Text("Model: \(model)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            Spacer()
+
+            // Configure menu before toggle for consistent alignment
+            if onConfigure != nil {
+                Menu {
+                    Button("Configure") { onConfigure?() }
+                    Button("Check Status") { }
+                    Divider()
+                    Button("Remove", role: .destructive) { }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .menuStyle(.borderlessButton)
+            }
+
+            Toggle("", isOn: $enabled)
+                .toggleStyle(.switch)
+                .labelsHidden()
+        }
+        .padding(.vertical, 10)
+        .onAppear { enabled = isEnabled }
+    }
+}
+
+// MARK: - Add Provider Button
+
+struct AddProviderButton: View {
+    let name: String
+    let icon: String
+    let color: Color
+
+    var body: some View {
+        Button(action: { /* Add provider */ }) {
+            VStack(spacing: 6) {
+                Image(systemName: icon)
+                    .font(.title2)
+                    .foregroundStyle(color)
+                Text(name)
+                    .font(.caption)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(Color.secondary.opacity(0.2), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Add Ollama Server Sheet
+
+struct AddOllamaServerSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var serverName = ""
+    @State private var serverURL = "http://localhost:11434"
+    @State private var isChecking = false
+    @State private var availableModels: [String] = []
+    @State private var selectedModel = ""
+
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("Add Ollama Server")
+                .font(.headline)
+
+            Form {
+                Section("Server Details") {
+                    TextField("Name (e.g., 'Work Ollama')", text: $serverName)
+                    TextField("Server URL", text: $serverURL)
+                }
+
+                Section("Connection") {
+                    if isChecking {
+                        HStack {
+                            ProgressView()
+                                .scaleEffect(0.8)
+                            Text("Checking connection...")
+                        }
+                    } else if !availableModels.isEmpty {
+                        HStack {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                            Text("\(availableModels.count) models available")
+                        }
+
+                        Picker("Default Model", selection: $selectedModel) {
+                            Text("None").tag("")
+                            ForEach(availableModels, id: \.self) { model in
+                                Text(model).tag(model)
+                            }
+                        }
+                    } else {
+                        Button("Test Connection") {
+                            Task { await checkConnection() }
+                        }
+                    }
+                }
+            }
+            .formStyle(.grouped)
+
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .keyboardShortcut(.escape)
+                Spacer()
+                Button("Add Server") {
+                    // Add the server
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(serverName.isEmpty || availableModels.isEmpty)
+            }
+        }
+        .padding()
+        .frame(width: 450, height: 400)
+    }
+
+    private func checkConnection() async {
+        isChecking = true
+        defer { isChecking = false }
+
+        // Simulate checking - in production, call Ollama API
+        try? await Task.sleep(for: .seconds(1))
+        availableModels = ["llama3.2:latest", "qwen2.5:7b", "codellama:latest", "mistral:latest"]
+        if !availableModels.isEmpty {
+            selectedModel = availableModels.first ?? ""
+        }
+    }
+}
+
+// MARK: - On-Device Models Section
+
+struct OnDeviceModelsSection: View {
+    @Binding var showImportHuggingFace: Bool
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // System info banner
+            systemInfoBanner
+
+            // Installed models
+            SettingsCard(title: "Installed Models", icon: "checkmark.circle.fill") {
+                VStack(spacing: 0) {
+                    // Sample installed models
+                    InstalledModelRow(
+                        name: "Qwen 2.5 7B",
+                        size: "4.5 GB",
+                        isRecommended: true
+                    )
+                }
+            }
+
+            // Browse more models
+            SettingsCard(title: "Download Models", icon: "arrow.down.circle") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Download AI models to run locally on your Mac")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    // Model family cards
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 200))], spacing: 12) {
+                        ModelFamilyCard(
+                            name: "Qwen 2.5",
+                            provider: "Alibaba",
+                            description: "Versatile multilingual model",
+                            modelCount: 4,
+                            tags: ["Chat", "Code"]
+                        )
+
+                        ModelFamilyCard(
+                            name: "Llama 3.2",
+                            provider: "Meta",
+                            description: "Fast and capable",
+                            modelCount: 3,
+                            tags: ["Chat"]
+                        )
+
+                        ModelFamilyCard(
+                            name: "DeepSeek Coder",
+                            provider: "DeepSeek",
+                            description: "Optimized for coding",
+                            modelCount: 2,
+                            tags: ["Code"]
+                        )
+
+                        ModelFamilyCard(
+                            name: "Vision Models",
+                            provider: "Various",
+                            description: "Image understanding",
+                            modelCount: 3,
+                            tags: ["Vision"]
+                        )
+                    }
+
+                    // Import custom
+                    Button(action: { showImportHuggingFace = true }) {
+                        HStack {
+                            Image(systemName: "plus.circle")
+                            Text("Import from HuggingFace...")
+                        }
+                        .font(.subheadline)
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            // Storage info
+            SettingsCard(title: "Storage", icon: "externaldrive") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("4.5 GB used")
+                            .font(.headline)
+                        Text("Models stored in ~/Library/Application Support/Envoy/Models")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button("Show in Finder") {
+                        let modelsPath = FileManager.default.urls(
+                            for: .applicationSupportDirectory,
+                            in: .userDomainMask
+                        ).first!.appendingPathComponent("Envoy/Models")
+                        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: modelsPath.path)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            }
+        }
+    }
+
+    private var systemInfoBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "memorychip")
+                .font(.title2)
+                .foregroundStyle(.blue)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(systemRecommendation)
+                    .font(.subheadline)
+
+                Text("Models marked with ✓ are optimized for your system")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.blue.opacity(0.1))
+        )
+    }
+
+    private var systemRecommendation: String {
+        let ram = ProcessInfo.processInfo.physicalMemory / (1024 * 1024 * 1024)
+        if ram >= 64 {
+            return "Your Mac has \(ram)GB RAM - you can run large models (70B+)"
+        } else if ram >= 32 {
+            return "Your Mac has \(ram)GB RAM - recommended models up to 32B"
+        } else if ram >= 16 {
+            return "Your Mac has \(ram)GB RAM - recommended models up to 8B"
+        } else {
+            return "Your Mac has \(ram)GB RAM - recommended models up to 4B"
+        }
+    }
+}
+
+// MARK: - Installed Model Row
+
+struct InstalledModelRow: View {
+    let name: String
+    let size: String
+    var isRecommended: Bool = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "cube.box.fill")
+                .font(.title2)
+                .foregroundStyle(.blue)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(name)
+                        .fontWeight(.medium)
+
+                    if isRecommended {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.caption)
+                    }
+                }
+
+                Text(size)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Menu {
+                Button("Use as Default") { }
+                Divider()
+                Button("Delete", role: .destructive) { }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Model Family Card
+
+struct ModelFamilyCard: View {
+    let name: String
+    let provider: String
+    let description: String
+    let modelCount: Int
+    let tags: [String]
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: { /* Show model family details */ }) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(name)
+                            .font(.headline)
+                        Text("by \(provider)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    Text("\(modelCount)")
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.secondary.opacity(0.1))
+                        .clipShape(Capsule())
+                }
+
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+
+                HStack(spacing: 4) {
+                    ForEach(tags, id: \.self) { tag in
+                        Text(tag)
+                            .font(.caption2)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.1))
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color(nsColor: .controlBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(isHovered ? Color.accentColor.opacity(0.5) : Color.secondary.opacity(0.2), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+// MARK: - Provider Edit Sheet (placeholder)
+
+struct ProviderEditSheet: View {
+    let provider: ProviderConfig
+
+    var body: some View {
+        Text("Edit \(provider.name)")
+            .padding()
+    }
+}
+
+
+// MARK: - Legacy LLM Settings (for backwards compatibility)
 
 struct LLMSettingsContent: View {
     @ObservedObject private var serverManager = ServerManager.shared
@@ -635,16 +1299,31 @@ struct ServerSettingsContent: View {
     @ObservedObject private var serverManager = ServerManager.shared
 
     @AppStorage("localAgentPort") private var localPort = 8080
-    @AppStorage("localAgentHost") private var localHost = "127.0.0.1"
+    @AppStorage("localAgentHost") private var localHost = "0.0.0.0"  // Bind to all interfaces by default
     @AppStorage("dataDirectory") private var dataDirectory = "~/AgentKit"
     @AppStorage("autoConnectLocal") private var autoConnectLocal = true
     @AppStorage("enableBonjour") private var enableBonjour = true
 
     @State private var isStarting = false
     @State private var showLogs = false
+    @State private var availableHosts: [String] = []
 
     var body: some View {
         VStack(spacing: 16) {
+            // Description card explaining what this is
+            SettingsCard(title: "Agent-to-Agent Server", icon: "antenna.radiowaves.left.and.right") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("The A2A (Agent-to-Agent) server enables communication between AI agents using Google's open protocol.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+
+                    Link(destination: URL(string: "https://github.com/google/A2A")!) {
+                        Label("Learn more about A2A Protocol", systemImage: "arrow.up.forward.square")
+                            .font(.caption)
+                    }
+                }
+            }
+
             SettingsCard(title: "Status", icon: "circle.fill") {
                 HStack {
                     Circle()
@@ -720,10 +1399,43 @@ struct ServerSettingsContent: View {
             SettingsCard(title: "Configuration", icon: "slider.horizontal.3") {
                 VStack(spacing: 12) {
                     HStack {
-                        Text("Host")
+                        Text("Bind Address")
                             .frame(width: 100, alignment: .leading)
-                        TextField("Host", text: $localHost)
-                            .textFieldStyle(.roundedBorder)
+
+                        Picker("Host", selection: $localHost) {
+                            Text("All Interfaces (0.0.0.0)").tag("0.0.0.0")
+                            ForEach(availableHosts, id: \.self) { host in
+                                Text(host).tag(host)
+                            }
+                        }
+                        .labelsHidden()
+                    }
+
+                    // Show accessible addresses when server is running
+                    if serverManager.isRunning && !availableHosts.isEmpty {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Accessible at:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            ForEach(availableHosts.filter { $0 != "127.0.0.1" }, id: \.self) { host in
+                                HStack {
+                                    Text("http://\(host):\(localPort)")
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundStyle(.blue)
+
+                                    Button {
+                                        NSPasteboard.general.clearContents()
+                                        NSPasteboard.general.setString("http://\(host):\(localPort)", forType: .string)
+                                    } label: {
+                                        Image(systemName: "doc.on.doc")
+                                            .font(.caption2)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                        .padding(.vertical, 4)
                     }
 
                     HStack {
@@ -743,6 +1455,9 @@ struct ServerSettingsContent: View {
 
                     Toggle("Auto-start on Launch", isOn: $autoConnectLocal)
                 }
+            }
+            .onAppear {
+                availableHosts = getNetworkInterfaces()
             }
 
             SettingsCard(title: "Network Discovery", icon: "network") {
@@ -771,6 +1486,55 @@ struct ServerSettingsContent: View {
         } catch {
             // Error is displayed via serverManager.lastError
         }
+    }
+
+    /// Get available network interfaces (excluding loopback)
+    private func getNetworkInterfaces() -> [String] {
+        var addresses: [String] = []
+
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0 else { return addresses }
+        defer { freeifaddrs(ifaddr) }
+
+        var ptr = ifaddr
+        while ptr != nil {
+            defer { ptr = ptr?.pointee.ifa_next }
+
+            guard let interface = ptr?.pointee else { continue }
+
+            // Only IPv4 addresses
+            let addrFamily = interface.ifa_addr.pointee.sa_family
+            guard addrFamily == UInt8(AF_INET) else { continue }
+
+            // Get the interface name
+            let name = String(cString: interface.ifa_name)
+
+            // Skip loopback
+            guard name != "lo0" else { continue }
+
+            // Convert address to string
+            var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            getnameinfo(
+                interface.ifa_addr,
+                socklen_t(interface.ifa_addr.pointee.sa_len),
+                &hostname,
+                socklen_t(hostname.count),
+                nil,
+                0,
+                NI_NUMERICHOST
+            )
+
+            // Convert CChar array to String, truncating at null terminator
+            let address = hostname.withUnsafeBufferPointer { buffer in
+                let nullIndex = buffer.firstIndex(of: 0) ?? buffer.endIndex
+                return String(decoding: buffer[..<nullIndex].map { UInt8(bitPattern: $0) }, as: UTF8.self)
+            }
+            if !address.isEmpty && address != "127.0.0.1" {
+                addresses.append(address)
+            }
+        }
+
+        return addresses.sorted()
     }
 }
 
@@ -835,163 +1599,178 @@ struct ServerLogsView: View {
 // MARK: - Extensions Settings
 
 struct ExtensionsSettingsContent: View {
-    @State private var extensions: [ExtensionItem] = ExtensionItem.builtInExtensions
-    @State private var searchText = ""
-    @State private var selectedCategory: ExtensionCategoryFilter = .all
-    @State private var isDiscovering = false
-
-    var filteredExtensions: [ExtensionItem] {
-        var result = extensions
-
-        // Filter by category
-        if selectedCategory != .all {
-            result = result.filter { $0.category == selectedCategory.rawValue }
-        }
-
-        // Filter by search
-        if !searchText.isEmpty {
-            result = result.filter {
-                $0.name.localizedCaseInsensitiveContains(searchText) ||
-                $0.description.localizedCaseInsensitiveContains(searchText)
-            }
-        }
-
-        return result
-    }
+    @State private var nativeTools: [ExtensionItem] = ExtensionItem.nativeTools
+    @State private var shortcuts: [ExtensionItem] = []
+    @State private var apps: [ExtensionItem] = []
+    @State private var isDiscoveringShortcuts = false
+    @State private var isDiscoveringApps = false
+    @State private var showAddAppSheet = false
 
     var body: some View {
         VStack(spacing: 16) {
-            // Discovery banner
-            SettingsCard(title: "Discover Extensions", icon: "magnifyingglass") {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Find and enable tools that agents can use, including Shortcuts, AppIntents, and MCP servers.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-
-                    HStack {
-                        Button(action: { Task { await discoverExtensions() } }) {
-                            HStack {
-                                if isDiscovering {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                } else {
-                                    Image(systemName: "arrow.triangle.2.circlepath")
-                                }
-                                Text("Discover Available Extensions")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isDiscovering)
-
-                        Spacer()
-                    }
-                }
-            }
-
-            // Search and filter
-            HStack {
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField("Search extensions...", text: $searchText)
-                        .textFieldStyle(.plain)
-                }
-                .padding(8)
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                Picker("Category", selection: $selectedCategory) {
-                    ForEach(ExtensionCategoryFilter.allCases) { category in
-                        Text(category.label).tag(category)
-                    }
-                }
-                .pickerStyle(.menu)
-                .frame(width: 140)
-            }
-
-            // Extensions list
-            SettingsCard(title: "Available Extensions", icon: "puzzlepiece.extension") {
-                if filteredExtensions.isEmpty {
-                    ContentUnavailableView(
-                        "No Extensions Found",
-                        systemImage: "puzzlepiece.extension",
-                        description: Text("Try discovering extensions or change your filter")
-                    )
-                    .frame(height: 150)
-                } else {
-                    VStack(spacing: 0) {
-                        ForEach($extensions.filter { ext in
-                            let matches = filteredExtensions.contains { $0.id == ext.wrappedValue.id }
-                            return matches
-                        }) { $item in
-                            ExtensionRow(item: $item)
-                            if item.id != filteredExtensions.last?.id {
-                                Divider()
-                                    .padding(.leading, 48)
-                            }
+            // Native Tools Section
+            SettingsCard(title: "Native Tools", icon: "wrench.and.screwdriver") {
+                VStack(spacing: 0) {
+                    ForEach($nativeTools) { $tool in
+                        ExtensionToggleRow(item: $tool)
+                        if tool.id != nativeTools.last?.id {
+                            Divider()
+                                .padding(.leading, 44)
                         }
                     }
                 }
             }
 
-            // System integrations info
+            // System Integrations Section
             SettingsCard(title: "System Integrations", icon: "apple.logo") {
-                VStack(alignment: .leading, spacing: 8) {
-                    SystemIntegrationRow(
+                VStack(spacing: 0) {
+                    SystemIntegrationToggleRow(
                         name: "Calendar & Reminders",
                         icon: "calendar",
-                        status: .available,
-                        description: "Access via EventKit"
+                        description: "Create events and reminders",
+                        permissionStatus: .granted
                     )
-                    Divider()
-                    SystemIntegrationRow(
+                    Divider().padding(.leading, 44)
+                    SystemIntegrationToggleRow(
                         name: "Safari Reading List",
                         icon: "book",
-                        status: .available,
-                        description: "Auto-import to RAG"
+                        description: "Import saved articles",
+                        permissionStatus: .granted
                     )
-                    Divider()
-                    SystemIntegrationRow(
+                    Divider().padding(.leading, 44)
+                    SystemIntegrationToggleRow(
                         name: "Shared with You",
                         icon: "person.2",
-                        status: .requiresPermission,
-                        description: "Requires macOS 13+"
-                    )
-                    Divider()
-                    SystemIntegrationRow(
-                        name: "Shortcuts",
-                        icon: "bolt.circle",
-                        status: .available,
-                        description: "Run any Shortcut"
+                        description: "Access shared links from Messages",
+                        permissionStatus: .needsPermission,
+                        onRequestPermission: requestSharedWithYouPermission
                     )
                 }
             }
-        }
-    }
 
-    private func discoverExtensions() async {
-        isDiscovering = true
+            // Shortcuts Section
+            SettingsCard(title: "Shortcuts", icon: "bolt.circle") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Allow agents to run your Shortcuts")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
 
-        // Discover real shortcuts using the shortcuts CLI
-        let discoveredShortcuts = await discoverShortcuts()
+                        Spacer()
 
-        // Add only new ones
-        for shortcut in discoveredShortcuts {
-            if !extensions.contains(where: { $0.id == shortcut.id }) {
-                extensions.append(shortcut)
+                        Button(action: { Task { await discoverShortcuts() } }) {
+                            HStack(spacing: 4) {
+                                if isDiscoveringShortcuts {
+                                    ProgressView()
+                                        .scaleEffect(0.6)
+                                } else {
+                                    Image(systemName: "arrow.clockwise")
+                                }
+                                Text("Refresh")
+                            }
+                            .font(.caption)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(isDiscoveringShortcuts)
+                    }
+
+                    if shortcuts.isEmpty {
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 8) {
+                                Image(systemName: "bolt.circle")
+                                    .font(.title)
+                                    .foregroundStyle(.secondary)
+                                Text("No shortcuts discovered")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Button("Open Shortcuts App") {
+                                    NSWorkspace.shared.open(URL(string: "shortcuts://")!)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                            .padding()
+                            Spacer()
+                        }
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach($shortcuts) { $shortcut in
+                                ShortcutToggleRow(item: $shortcut)
+                                if shortcut.id != shortcuts.last?.id {
+                                    Divider()
+                                        .padding(.leading, 44)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Apps Section (AppIntents)
+            SettingsCard(title: "Apps", icon: "app.badge") {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Apps with actions agents can perform")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Button(action: { showAddAppSheet = true }) {
+                            Label("Add App", systemImage: "plus")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+
+                    if apps.isEmpty {
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 8) {
+                                Image(systemName: "app.badge")
+                                    .font(.title)
+                                    .foregroundStyle(.secondary)
+                                Text("No apps added")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("Add apps that support AppIntents")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding()
+                            Spacer()
+                        }
+                    } else {
+                        VStack(spacing: 0) {
+                            ForEach($apps) { $app in
+                                AppToggleRow(item: $app)
+                                if app.id != apps.last?.id {
+                                    Divider()
+                                        .padding(.leading, 44)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
-
-        isDiscovering = false
+        .task {
+            await discoverShortcuts()
+        }
+        .sheet(isPresented: $showAddAppSheet) {
+            AddAppSheet(apps: $apps)
+        }
     }
 
-    /// Discover user's Shortcuts using the macOS shortcuts CLI
-    private func discoverShortcuts() async -> [ExtensionItem] {
-        let shortcutsPath = "/usr/bin/shortcuts"
+    private func discoverShortcuts() async {
+        isDiscoveringShortcuts = true
+        defer { isDiscoveringShortcuts = false }
 
-        guard FileManager.default.fileExists(atPath: shortcutsPath) else {
-            return []
-        }
+        let shortcutsPath = "/usr/bin/shortcuts"
+        guard FileManager.default.fileExists(atPath: shortcutsPath) else { return }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shortcutsPath)
@@ -1006,32 +1785,878 @@ struct ExtensionsSettingsContent: View {
             process.waitUntilExit()
 
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            guard let output = String(data: data, encoding: .utf8) else {
-                return []
-            }
+            guard let output = String(data: data, encoding: .utf8) else { return }
 
-            // Parse shortcut names (one per line)
             let shortcutNames = output
                 .components(separatedBy: .newlines)
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
 
-            return shortcutNames.map { name in
-                ExtensionItem(
+            shortcuts = shortcutNames.map { name in
+                // Preserve enabled state if already exists
+                let existing = shortcuts.first { $0.name == name }
+                return ExtensionItem(
                     id: "shortcut.\(name.lowercased().replacingOccurrences(of: " ", with: "-"))",
                     name: name,
                     description: "User Shortcut",
                     category: "shortcuts",
                     icon: "bolt.circle.fill",
-                    isEnabled: false,
+                    isEnabled: existing?.isEnabled ?? false,
                     source: .shortcuts
                 )
             }
         } catch {
             print("Failed to discover shortcuts: \(error)")
-            return []
         }
     }
+
+    private func requestSharedWithYouPermission() {
+        // Open System Preferences to the relevant pane
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ShareKit") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+// MARK: - Integrations Settings
+
+struct IntegrationsSettingsContent: View {
+    @EnvironmentObject private var appState: AppState
+
+    @AppStorage("slackToken") private var slackToken: String = ""
+    @AppStorage("quipToken") private var quipToken: String = ""
+
+    @State private var tempSlackToken: String = ""
+    @State private var tempQuipToken: String = ""
+    @State private var slackStatus: IntegrationStatus = .notConfigured
+    @State private var quipStatus: IntegrationStatus = .notConfigured
+    @State private var isTesting = false
+
+    enum IntegrationStatus {
+        case notConfigured
+        case configured
+        case testing
+        case error(String)
+
+        var color: Color {
+            switch self {
+            case .notConfigured: return .secondary
+            case .configured: return .green
+            case .testing: return .blue
+            case .error: return .red
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .notConfigured: return "circle"
+            case .configured: return "checkmark.circle.fill"
+            case .testing: return "arrow.clockwise"
+            case .error: return "exclamationmark.circle.fill"
+            }
+        }
+
+        var label: String {
+            switch self {
+            case .notConfigured: return "Not Configured"
+            case .configured: return "Connected"
+            case .testing: return "Testing..."
+            case .error(let msg): return "Error: \(msg)"
+            }
+        }
+
+        var isConfigured: Bool {
+            if case .configured = self { return true }
+            return false
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // Slack Integration
+            SettingsCard(title: "Slack", icon: "bubble.left.and.bubble.right") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Connect to Slack to send messages, search channels, and interact with your workspace.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        SecureField("Bot Token (xoxb-...)", text: $tempSlackToken)
+                            .textFieldStyle(.roundedBorder)
+
+                        statusBadge(slackStatus)
+                    }
+
+                    HStack {
+                        Text("Get a token from")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+
+                        Link("api.slack.com/apps", destination: URL(string: "https://api.slack.com/apps")!)
+                            .font(.caption)
+
+                        Spacer()
+
+                        Button("Save & Test") {
+                            Task { await saveAndTestSlack() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(tempSlackToken.isEmpty || isTesting)
+                    }
+
+                    // Available tools when connected
+                    if slackStatus.isConfigured {
+                        toolsList(tools: [
+                            ("Send Message", "arrow.up.message"),
+                            ("List Channels", "list.bullet"),
+                            ("Channel History", "clock"),
+                            ("Add Reaction", "face.smiling"),
+                            ("Search Messages", "magnifyingglass"),
+                            ("User Info", "person.crop.circle")
+                        ])
+                    }
+                }
+            }
+
+            // Quip Integration
+            SettingsCard(title: "Quip", icon: "doc.text") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Connect to Quip to create documents, edit content, and collaborate with your team.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 8) {
+                        SecureField("Access Token", text: $tempQuipToken)
+                            .textFieldStyle(.roundedBorder)
+
+                        statusBadge(quipStatus)
+                    }
+
+                    HStack {
+                        Text("Get a token from Quip settings → API")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+
+                        Spacer()
+
+                        Button("Save & Test") {
+                            Task { await saveAndTestQuip() }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(tempQuipToken.isEmpty || isTesting)
+                    }
+
+                    // Available tools when connected
+                    if quipStatus.isConfigured {
+                        toolsList(tools: [
+                            ("Create Document", "doc.badge.plus"),
+                            ("Get Document", "doc.text"),
+                            ("Edit Document", "pencil"),
+                            ("List Folders", "folder"),
+                            ("Add Comment", "text.bubble"),
+                            ("Search", "magnifyingglass")
+                        ])
+                    }
+                }
+            }
+
+            // Info Card
+            SettingsCard(title: "About Integrations", icon: "info.circle") {
+                Text("Native integrations provide tools that agents can use during conversations. When configured, agents can automatically use these tools to complete tasks like sending Slack messages or creating Quip documents.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+        }
+        .onAppear {
+            tempSlackToken = slackToken
+            tempQuipToken = quipToken
+            updateStatuses()
+        }
+    }
+
+    @ViewBuilder
+    private func statusBadge(_ status: IntegrationStatus) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: status.icon)
+                .font(.caption)
+            Text(status.label)
+                .font(.caption)
+        }
+        .foregroundStyle(status.color)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(status.color.opacity(0.1))
+        .clipShape(Capsule())
+    }
+
+    @ViewBuilder
+    private func toolsList(tools: [(String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Available Tools:")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.top, 8)
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
+                ForEach(tools, id: \.0) { tool in
+                    HStack(spacing: 4) {
+                        Image(systemName: tool.1)
+                            .font(.caption2)
+                            .foregroundStyle(.blue)
+                        Text(tool.0)
+                            .font(.caption2)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func updateStatuses() {
+        slackStatus = slackToken.isEmpty ? .notConfigured : .configured
+        quipStatus = quipToken.isEmpty ? .notConfigured : .configured
+    }
+
+    private func saveAndTestSlack() async {
+        isTesting = true
+        slackStatus = .testing
+
+        // Save token
+        slackToken = tempSlackToken
+
+        // Configure integration
+        await appState.configureSlack(token: tempSlackToken)
+
+        // Verify by checking if tools are available
+        let tools = await appState.nativeIntegrations.allTools()
+        let hasSlackTools = tools.contains { $0.name.hasPrefix("slack_") }
+
+        await MainActor.run {
+            slackStatus = hasSlackTools ? .configured : .error("Failed to connect")
+            isTesting = false
+        }
+    }
+
+    private func saveAndTestQuip() async {
+        isTesting = true
+        quipStatus = .testing
+
+        // Save token
+        quipToken = tempQuipToken
+
+        // Configure integration
+        await appState.configureQuip(token: tempQuipToken)
+
+        // Verify by checking if tools are available
+        let tools = await appState.nativeIntegrations.allTools()
+        let hasQuipTools = tools.contains { $0.name.hasPrefix("quip_") }
+
+        await MainActor.run {
+            quipStatus = hasQuipTools ? .configured : .error("Failed to connect")
+            isTesting = false
+        }
+    }
+}
+
+// MARK: - Extension Toggle Row
+
+struct ExtensionToggleRow: View {
+    @Binding var item: ExtensionItem
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: item.icon)
+                .font(.title3)
+                .foregroundStyle(item.isEnabled ? .blue : .secondary)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(item.name)
+                        .fontWeight(.medium)
+
+                    if item.requiresApproval {
+                        Text("APPROVAL")
+                            .font(.system(size: 8, weight: .bold))
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(.orange.opacity(0.15))
+                            .foregroundStyle(.orange)
+                            .clipShape(RoundedRectangle(cornerRadius: 3))
+                    }
+                }
+
+                Text(item.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Toggle("", isOn: $item.isEnabled)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - System Integration Toggle Row
+
+struct SystemIntegrationToggleRow: View {
+    let name: String
+    let icon: String
+    let description: String
+    let permissionStatus: PermissionStatus
+    var onRequestPermission: (() -> Void)? = nil
+
+    @State private var isEnabled = true
+
+    enum PermissionStatus {
+        case granted
+        case needsPermission
+        case denied
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(permissionStatus == .granted ? .blue : .secondary)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .fontWeight(.medium)
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if permissionStatus == .needsPermission {
+                Button(action: { onRequestPermission?() }) {
+                    Text("Grant Access")
+                        .font(.caption)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            } else {
+                Toggle("", isOn: $isEnabled)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+            }
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Shortcut Toggle Row
+
+struct ShortcutToggleRow: View {
+    @Binding var item: ExtensionItem
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "bolt.circle.fill")
+                .font(.title3)
+                .foregroundStyle(item.isEnabled ? .orange : .secondary)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .fontWeight(.medium)
+                Text("Shortcut")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            // Open in Shortcuts button
+            Button(action: {
+                let encodedName = item.name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? item.name
+                if let url = URL(string: "shortcuts://open-shortcut?name=\(encodedName)") {
+                    NSWorkspace.shared.open(url)
+                }
+            }) {
+                Image(systemName: "arrow.up.forward.square")
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help("Open in Shortcuts")
+
+            Toggle("", isOn: $item.isEnabled)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - App Toggle Row
+
+struct AppToggleRow: View {
+    @Binding var item: ExtensionItem
+    @State private var showConfig = false
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // App icon (would load from bundle in production)
+            RoundedRectangle(cornerRadius: 8)
+                .fill(.blue.gradient)
+                .frame(width: 28, height: 28)
+                .overlay {
+                    Image(systemName: "app")
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .fontWeight(.medium)
+                Text(item.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if item.requiresApproval {
+                Button(action: { showConfig = true }) {
+                    Image(systemName: "gear")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Configure")
+            }
+
+            Toggle("", isOn: $item.isEnabled)
+                .labelsHidden()
+                .toggleStyle(.switch)
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+// MARK: - Add App Sheet
+
+struct AddAppSheet: View {
+    @Binding var apps: [ExtensionItem]
+    @Environment(\.dismiss) private var dismiss
+    @State private var discoveredApps: [DiscoveredApp] = []
+    @State private var isScanning = false
+    @State private var searchText = ""
+    @State private var selectedApp: DiscoveredApp? = nil
+
+    var filteredApps: [DiscoveredApp] {
+        if searchText.isEmpty {
+            return discoveredApps
+        }
+        return discoveredApps.filter {
+            $0.name.localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                if selectedApp != nil {
+                    Button(action: { selectedApp = nil }) {
+                        Image(systemName: "chevron.left")
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Text(selectedApp?.name ?? "Add App")
+                    .font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.escape)
+            }
+            .padding()
+
+            Divider()
+
+            if let app = selectedApp {
+                // Detail view for selected app
+                AppDetailView(
+                    app: app,
+                    isAdded: apps.contains(where: { $0.id == app.bundleId }),
+                    onAdd: {
+                        addApp(app)
+                        selectedApp = nil
+                    }
+                )
+            } else {
+                // Search
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(.secondary)
+                    TextField("Search installed apps...", text: $searchText)
+                        .textFieldStyle(.plain)
+                }
+                .padding(8)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .padding()
+
+                // App list
+                if isScanning {
+                    Spacer()
+                    ProgressView("Scanning for apps with AppIntents...")
+                    Spacer()
+                } else if filteredApps.isEmpty {
+                    Spacer()
+                    VStack(spacing: 12) {
+                        Image(systemName: "app.badge.checkmark")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.secondary)
+                        Text("No apps with AppIntents found")
+                            .font(.headline)
+                        Text("Apps need to support AppIntents to be added here")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                } else {
+                    List(filteredApps) { app in
+                        Button(action: { selectedApp = app }) {
+                            HStack {
+                                // App icon
+                                if let icon = app.icon {
+                                    Image(nsImage: icon)
+                                        .resizable()
+                                        .frame(width: 32, height: 32)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                } else {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(.gray.opacity(0.2))
+                                        .frame(width: 32, height: 32)
+                                }
+
+                                VStack(alignment: .leading) {
+                                    Text(app.name)
+                                        .fontWeight(.medium)
+                                    Text("\(app.actions.count) actions available")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer()
+
+                                if apps.contains(where: { $0.id == app.bundleId }) {
+                                    Text("Added")
+                                        .font(.caption)
+                                        .foregroundStyle(.green)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(Color.green.opacity(0.1), in: Capsule())
+                                } else {
+                                    Image(systemName: "chevron.right")
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.vertical, 4)
+                    }
+                }
+            }
+        }
+        .frame(width: 500, height: 550)
+        .task {
+            await scanForApps()
+        }
+    }
+
+    private func scanForApps() async {
+        isScanning = true
+        defer { isScanning = false }
+
+        // Scan /Applications for apps with AppIntents
+        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: "/Applications") else {
+            return
+        }
+        let appURLs = contents
+            .compactMap { URL(fileURLWithPath: "/Applications/\($0)") }
+            .filter { $0.pathExtension == "app" }
+
+        var found: [DiscoveredApp] = []
+
+        for appURL in appURLs.prefix(50) { // Limit for performance
+            if let bundle = Bundle(url: appURL),
+               let name = bundle.infoDictionary?["CFBundleName"] as? String ?? bundle.infoDictionary?["CFBundleDisplayName"] as? String,
+               let bundleId = bundle.bundleIdentifier {
+
+                // Check if app has AppIntents (simplified check)
+                let hasIntents = FileManager.default.fileExists(
+                    atPath: appURL.appendingPathComponent("Contents/Resources/AppIntents.intentdefinition").path
+                ) || FileManager.default.fileExists(
+                    atPath: appURL.appendingPathComponent("Contents/PlugIns").path
+                )
+
+                // Load app icon
+                var icon: NSImage?
+                if let iconFile = bundle.infoDictionary?["CFBundleIconFile"] as? String {
+                    let iconPath = appURL.appendingPathComponent("Contents/Resources/\(iconFile)")
+                    icon = NSImage(contentsOf: iconPath)
+                }
+                if icon == nil {
+                    icon = NSWorkspace.shared.icon(forFile: appURL.path)
+                }
+
+                if hasIntents {
+                    // Generate realistic actions based on app type
+                    // In production, this would actually introspect the app's AppIntents
+                    let actions = generateActionsForApp(name: name, bundleId: bundleId)
+
+                    found.append(DiscoveredApp(
+                        bundleId: bundleId,
+                        name: name,
+                        icon: icon,
+                        actions: actions
+                    ))
+                }
+            }
+        }
+
+        discoveredApps = found.sorted { $0.name < $1.name }
+    }
+
+    /// Generate representative actions for an app based on its type
+    /// In production, this would actually introspect the app's AppIntents metadata
+    private func generateActionsForApp(name: String, bundleId: String) -> [AppAction] {
+        let lowercaseName = name.lowercased()
+
+        // Common action templates based on app categories
+        if lowercaseName.contains("mail") || lowercaseName.contains("outlook") {
+            return [
+                AppAction(id: "\(bundleId).send", name: "Send Email", description: "Compose and send emails", icon: "paperplane.fill", color: .blue, requiresApproval: true),
+                AppAction(id: "\(bundleId).read", name: "Read Emails", description: "Access and read email content", icon: "envelope.open.fill", color: .blue, requiresApproval: false),
+                AppAction(id: "\(bundleId).search", name: "Search Emails", description: "Search through your mailbox", icon: "magnifyingglass", color: .gray, requiresApproval: false),
+            ]
+        } else if lowercaseName.contains("calendar") {
+            return [
+                AppAction(id: "\(bundleId).create", name: "Create Event", description: "Add new calendar events", icon: "calendar.badge.plus", color: .red, requiresApproval: true),
+                AppAction(id: "\(bundleId).read", name: "View Events", description: "Access calendar entries", icon: "calendar", color: .red, requiresApproval: false),
+                AppAction(id: "\(bundleId).modify", name: "Modify Events", description: "Update existing events", icon: "pencil", color: .orange, requiresApproval: true),
+            ]
+        } else if lowercaseName.contains("note") || lowercaseName.contains("bear") {
+            return [
+                AppAction(id: "\(bundleId).create", name: "Create Note", description: "Create new notes", icon: "square.and.pencil", color: .yellow, requiresApproval: false),
+                AppAction(id: "\(bundleId).read", name: "Read Notes", description: "Access note content", icon: "doc.text", color: .yellow, requiresApproval: false),
+                AppAction(id: "\(bundleId).search", name: "Search Notes", description: "Search through notes", icon: "magnifyingglass", color: .gray, requiresApproval: false),
+            ]
+        } else if lowercaseName.contains("reminder") || lowercaseName.contains("things") || lowercaseName.contains("todoist") {
+            return [
+                AppAction(id: "\(bundleId).create", name: "Create Reminder", description: "Add new reminders", icon: "checklist", color: .orange, requiresApproval: false),
+                AppAction(id: "\(bundleId).complete", name: "Complete Tasks", description: "Mark tasks as done", icon: "checkmark.circle.fill", color: .green, requiresApproval: false),
+                AppAction(id: "\(bundleId).read", name: "View Tasks", description: "Access task lists", icon: "list.bullet", color: .orange, requiresApproval: false),
+            ]
+        } else if lowercaseName.contains("safari") || lowercaseName.contains("chrome") || lowercaseName.contains("firefox") {
+            return [
+                AppAction(id: "\(bundleId).open", name: "Open URL", description: "Open web pages", icon: "globe", color: .blue, requiresApproval: false),
+                AppAction(id: "\(bundleId).search", name: "Web Search", description: "Perform web searches", icon: "magnifyingglass", color: .gray, requiresApproval: false),
+            ]
+        } else if lowercaseName.contains("music") || lowercaseName.contains("spotify") {
+            return [
+                AppAction(id: "\(bundleId).play", name: "Play Music", description: "Control playback", icon: "play.fill", color: .pink, requiresApproval: false),
+                AppAction(id: "\(bundleId).search", name: "Search Music", description: "Find songs and artists", icon: "magnifyingglass", color: .gray, requiresApproval: false),
+            ]
+        } else if lowercaseName.contains("finder") || lowercaseName.contains("file") {
+            return [
+                AppAction(id: "\(bundleId).open", name: "Open Files", description: "Open files and folders", icon: "folder.fill", color: .blue, requiresApproval: false),
+                AppAction(id: "\(bundleId).move", name: "Move Files", description: "Move files between locations", icon: "arrow.right.doc.on.clipboard", color: .blue, requiresApproval: true),
+                AppAction(id: "\(bundleId).delete", name: "Delete Files", description: "Move files to trash", icon: "trash.fill", color: .red, requiresApproval: true),
+            ]
+        } else {
+            // Generic actions for unknown apps
+            return [
+                AppAction(id: "\(bundleId).launch", name: "Launch App", description: "Open \(name)", icon: "app.fill", color: .gray, requiresApproval: false),
+                AppAction(id: "\(bundleId).action", name: "Perform Action", description: "Execute app-specific action", icon: "bolt.fill", color: .blue, requiresApproval: true),
+            ]
+        }
+    }
+
+    private func addApp(_ app: DiscoveredApp) {
+        let item = ExtensionItem(
+            id: app.bundleId,
+            name: app.name,
+            description: "\(app.actions.count) actions",
+            category: "apps",
+            icon: "app.badge",
+            isEnabled: true,
+            source: .appIntents
+        )
+        apps.append(item)
+    }
+}
+
+// MARK: - App Detail View (Approval/Actions Page)
+
+struct AppDetailView: View {
+    let app: DiscoveredApp
+    let isAdded: Bool
+    let onAdd: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // App header
+            HStack(spacing: 16) {
+                if let icon = app.icon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 64, height: 64)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                } else {
+                    RoundedRectangle(cornerRadius: 14)
+                        .fill(.gray.opacity(0.2))
+                        .frame(width: 64, height: 64)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(app.name)
+                        .font(.title2.weight(.semibold))
+                    Text(app.bundleId)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding()
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
+
+            Divider()
+
+            // Actions section
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Description
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Available Actions")
+                            .font(.headline)
+                        Text("Adding this app will allow agents to perform the following actions on your behalf:")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal)
+                    .padding(.top)
+
+                    // Actions list
+                    VStack(spacing: 0) {
+                        ForEach(app.actions) { action in
+                            HStack(spacing: 12) {
+                                Image(systemName: action.icon)
+                                    .font(.title3)
+                                    .foregroundStyle(action.color)
+                                    .frame(width: 24)
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(action.name)
+                                        .fontWeight(.medium)
+                                    Text(action.description)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer()
+
+                                // Risk indicator
+                                if action.requiresApproval {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "exclamationmark.shield")
+                                            .font(.caption)
+                                        Text("Approval Required")
+                                            .font(.caption2)
+                                    }
+                                    .foregroundStyle(.orange)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(Color.orange.opacity(0.1), in: Capsule())
+                                }
+                            }
+                            .padding(.horizontal)
+                            .padding(.vertical, 10)
+
+                            if action.id != app.actions.last?.id {
+                                Divider()
+                                    .padding(.leading, 52)
+                            }
+                        }
+                    }
+                    .background(Color(nsColor: .textBackgroundColor).opacity(0.3))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.horizontal)
+
+                    // Permissions note
+                    HStack(spacing: 8) {
+                        Image(systemName: "info.circle")
+                            .foregroundStyle(.blue)
+                        Text("Actions marked with \"Approval Required\" will ask for your confirmation before executing.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding()
+                    .background(Color.blue.opacity(0.05))
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .padding(.horizontal)
+                }
+            }
+
+            Divider()
+
+            // Add button
+            HStack {
+                Spacer()
+                if isAdded {
+                    Label("Already Added", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Button(action: onAdd) {
+                        Label("Add \(app.name)", systemImage: "plus.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                }
+                Spacer()
+            }
+            .padding()
+        }
+    }
+}
+
+// MARK: - App Action Model
+
+struct AppAction: Identifiable {
+    let id: String
+    let name: String
+    let description: String
+    let icon: String
+    let color: Color
+    let requiresApproval: Bool
+}
+
+struct DiscoveredApp: Identifiable {
+    let bundleId: String
+    let name: String
+    let icon: NSImage?
+    let actions: [AppAction]
+
+    var id: String { bundleId }
+}
+
+private func contentsOfDirectory(atPath path: String) -> [String] {
+    (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []
 }
 
 // MARK: - Extension Item Model
@@ -1052,6 +2677,66 @@ struct ExtensionItem: Identifiable {
         case mcp
         case appIntents
     }
+
+    /// Native tools that are built into the app
+    static let nativeTools: [ExtensionItem] = [
+        ExtensionItem(
+            id: "native.calendar",
+            name: "Calendar",
+            description: "Create events and check availability",
+            category: "calendar",
+            icon: "calendar",
+            isEnabled: true,
+            source: .builtIn
+        ),
+        ExtensionItem(
+            id: "native.reminders",
+            name: "Reminders",
+            description: "Create and manage tasks",
+            category: "tasks",
+            icon: "checklist",
+            isEnabled: true,
+            source: .builtIn
+        ),
+        ExtensionItem(
+            id: "native.filesystem",
+            name: "File System",
+            description: "Read and write files",
+            category: "files",
+            icon: "folder",
+            isEnabled: true,
+            source: .builtIn,
+            requiresApproval: true
+        ),
+        ExtensionItem(
+            id: "native.web",
+            name: "Web Fetch",
+            description: "Fetch and parse web content",
+            category: "other",
+            icon: "globe",
+            isEnabled: true,
+            source: .builtIn
+        ),
+        ExtensionItem(
+            id: "native.shell",
+            name: "Shell Commands",
+            description: "Execute terminal commands",
+            category: "system",
+            icon: "terminal",
+            isEnabled: false,
+            source: .builtIn,
+            requiresApproval: true
+        ),
+        ExtensionItem(
+            id: "native.memory",
+            name: "Memory (RAG)",
+            description: "Semantic search across content",
+            category: "other",
+            icon: "brain",
+            isEnabled: true,
+            source: .builtIn
+        )
+    ]
 
     static let builtInExtensions: [ExtensionItem] = [
         ExtensionItem(
@@ -1278,7 +2963,6 @@ enum ExtensionCategoryFilter: String, CaseIterable, Identifiable {
 // MARK: - Approval Settings
 
 struct ApprovalSettingsContent: View {
-    @AppStorage("defaultApprovalTimeout") private var defaultTimeout = 300
     @AppStorage("autoApproveRead") private var autoApproveRead = true
     @AppStorage("autoApproveGlob") private var autoApproveGlob = true
     @AppStorage("autoApproveGrep") private var autoApproveGrep = true
@@ -1287,30 +2971,74 @@ struct ApprovalSettingsContent: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            SettingsCard(title: "Timeout", icon: "clock") {
-                Picker("Default Timeout", selection: $defaultTimeout) {
-                    Text("1 minute").tag(60)
-                    Text("5 minutes").tag(300)
-                    Text("15 minutes").tag(900)
-                    Text("1 hour").tag(3600)
-                    Text("Never").tag(0)
-                }
-            }
-
             SettingsCard(title: "Auto-Approve (Low Risk)", icon: "checkmark.circle") {
-                VStack(spacing: 12) {
-                    Toggle("Read (file reading)", isOn: $autoApproveRead)
-                    Toggle("Glob (file search)", isOn: $autoApproveGlob)
-                    Toggle("Grep (content search)", isOn: $autoApproveGrep)
+                VStack(spacing: 16) {
+                    Text("These tools run without asking for permission each time.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ApprovalToggleRow(
+                        title: "Read",
+                        description: "Read file contents",
+                        isOn: $autoApproveRead
+                    )
+                    ApprovalToggleRow(
+                        title: "Glob",
+                        description: "Search for files by name pattern",
+                        isOn: $autoApproveGlob
+                    )
+                    ApprovalToggleRow(
+                        title: "Grep",
+                        description: "Search file contents",
+                        isOn: $autoApproveGrep
+                    )
                 }
             }
 
             SettingsCard(title: "Require Approval (High Risk)", icon: "exclamationmark.shield") {
-                VStack(spacing: 12) {
-                    Toggle("Write (file modification)", isOn: $requireWrite)
-                    Toggle("Bash (shell commands)", isOn: $requireBash)
+                VStack(spacing: 16) {
+                    Text("These tools always ask for your approval before running.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    ApprovalToggleRow(
+                        title: "Write",
+                        description: "Create or modify files",
+                        isOn: $requireWrite
+                    )
+                    ApprovalToggleRow(
+                        title: "Bash",
+                        description: "Execute shell commands",
+                        isOn: $requireBash
+                    )
                 }
             }
+        }
+    }
+}
+
+// MARK: - Approval Toggle Row
+
+struct ApprovalToggleRow: View {
+    let title: String
+    let description: String
+    @Binding var isOn: Bool
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .fontWeight(.medium)
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle("", isOn: $isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
         }
     }
 }
@@ -1524,13 +3252,13 @@ struct SettingsView: View {
             .tag(SettingsCategory.general)
 
             ScrollView {
-                LLMSettingsContent()
+                ModelsSettingsContent()
                     .padding()
             }
             .tabItem {
-                Label("LLM", systemImage: "cpu")
+                Label("Models", systemImage: "cube.box")
             }
-            .tag(SettingsCategory.llm)
+            .tag(SettingsCategory.models)
 
             ScrollView {
                 ServerSettingsContent()
@@ -1569,5 +3297,782 @@ struct SettingsView: View {
             .tag(SettingsCategory.advanced)
         }
         .frame(width: 550, height: 450)
+    }
+}
+
+// MARK: - System Health View
+
+/// Health check status indicator
+enum HealthStatus: String {
+    case healthy = "Healthy"
+    case warning = "Warning"
+    case unhealthy = "Unhealthy"
+    case checking = "Checking..."
+    case unknown = "Unknown"
+
+    var color: Color {
+        switch self {
+        case .healthy: return .green
+        case .warning: return .orange
+        case .unhealthy: return .red
+        case .checking: return .blue
+        case .unknown: return .gray
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .healthy: return "checkmark.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .unhealthy: return "xmark.circle.fill"
+        case .checking: return "arrow.clockwise"
+        case .unknown: return "questionmark.circle"
+        }
+    }
+}
+
+/// Individual health check item
+struct HealthCheckItem: Identifiable {
+    let id = UUID()
+    let name: String
+    let category: String
+    var status: HealthStatus
+    var detail: String
+    var lastChecked: Date?
+}
+
+/// Result of an end-to-end agent test
+struct E2ETestResult {
+    let success: Bool
+    let testMessage: String
+    let response: String?
+    let latencyMs: Int?
+    let tokensGenerated: Int?
+    let modelUsed: String?
+    let error: String?
+    let timestamp: Date
+}
+
+/// System health dashboard view
+struct SystemHealthView: View {
+    @EnvironmentObject private var appState: AppState
+    @Environment(ChatService.self) private var chatService
+    @Environment(ProviderConfigManager.self) private var providerManager
+
+    @State private var healthChecks: [HealthCheckItem] = []
+    @State private var isRunningChecks = false
+    @State private var lastFullCheck: Date?
+    @State private var overallStatus: HealthStatus = .unknown
+    @State private var mcpConnectionCount: Int = 0
+    @State private var nativeToolCount: Int = 0
+
+    // End-to-end test state
+    @State private var isRunningE2ETest = false
+    @State private var e2eTestResult: E2ETestResult?
+    @State private var e2eTestConversationId: ConversationID?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                // Overall Status Banner
+                overallStatusBanner
+
+                // Run Health Check Button
+                HStack {
+                    Button(action: runAllHealthChecks) {
+                        Label(
+                            isRunningChecks ? "Running Checks..." : "Run Health Check",
+                            systemImage: isRunningChecks ? "arrow.clockwise" : "heart.text.square"
+                        )
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isRunningChecks)
+
+                    if let lastCheck = lastFullCheck {
+                        Text("Last checked: \(lastCheck, style: .relative) ago")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+                }
+                .padding(.bottom, 8)
+
+                // Health Check Categories
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 16) {
+                    // LLM Providers Section
+                    healthSection(title: "LLM Providers", icon: "cpu", checks: healthChecks.filter { $0.category == "provider" })
+
+                    // Agent Connections Section
+                    healthSection(title: "Agent Connections", icon: "person.2", checks: healthChecks.filter { $0.category == "agent" })
+
+                    // MCP Tools Section
+                    healthSection(title: "MCP Extensions", icon: "puzzlepiece.extension", checks: healthChecks.filter { $0.category == "mcp" })
+
+                    // Native Integrations Section
+                    healthSection(title: "Native Integrations", icon: "bolt.horizontal", checks: healthChecks.filter { $0.category == "integration" })
+
+                    // Data & Storage Section
+                    healthSection(title: "Data & Storage", icon: "externaldrive", checks: healthChecks.filter { $0.category == "data" })
+                }
+
+                // Detailed Issues (if any)
+                let issues = healthChecks.filter { $0.status == .unhealthy || $0.status == .warning }
+                if !issues.isEmpty {
+                    issuesSection(issues: issues)
+                }
+
+                // System Info
+                systemInfoSection
+
+                // End-to-End Agent Test Section
+                e2eTestSection
+            }
+            .padding()
+        }
+        .onAppear {
+            initializeHealthChecks()
+            runAllHealthChecks()
+        }
+        .task {
+            mcpConnectionCount = await appState.mcpManager.connectionCount
+            nativeToolCount = await appState.nativeIntegrations.allTools().count
+        }
+    }
+
+    // MARK: - End-to-End Test Section
+
+    private var e2eTestSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "testtube.2")
+                    .foregroundStyle(.purple)
+                Text("End-to-End Agent Test")
+                    .font(.headline)
+            }
+
+            Text("Run a real conversation with the agent to verify the complete pipeline works.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                Button(action: runE2ETest) {
+                    Label(
+                        isRunningE2ETest ? "Testing..." : "Run Agent Test",
+                        systemImage: isRunningE2ETest ? "arrow.clockwise" : "play.fill"
+                    )
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.purple)
+                .disabled(isRunningE2ETest || !chatService.isReady)
+
+                if let result = e2eTestResult {
+                    HStack(spacing: 6) {
+                        Image(systemName: result.success ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .foregroundStyle(result.success ? .green : .red)
+                        Text(result.success ? "Passed" : "Failed")
+                            .font(.subheadline.weight(.medium))
+                    }
+                }
+
+                Spacer()
+
+                if let convId = e2eTestConversationId {
+                    Button("View Conversation") {
+                        // Navigate to the test conversation
+                        appState.selectedConversationId = convId
+                        appState.selectedSidebarItem = .conversations
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
+
+            if let result = e2eTestResult {
+                e2eTestResultView(result)
+            }
+
+            if !chatService.isReady {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Select a model/provider first to run the agent test")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.controlBackgroundColor))
+        )
+    }
+
+    private func e2eTestResultView(_ result: E2ETestResult) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Divider()
+                .padding(.vertical, 4)
+
+            // Test details
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Test Message")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(.secondary)
+                    Text(result.testMessage)
+                        .font(.caption)
+                        .lineLimit(2)
+                }
+                Spacer()
+            }
+
+            if let response = result.response {
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Agent Response")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Text(response)
+                            .font(.caption)
+                            .lineLimit(3)
+                    }
+                    Spacer()
+                }
+            }
+
+            // Stats
+            HStack(spacing: 16) {
+                if let latency = result.latencyMs {
+                    statBadge("Latency", "\(latency)ms")
+                }
+                if let tokens = result.tokensGenerated {
+                    statBadge("Tokens", "\(tokens)")
+                }
+                if let model = result.modelUsed {
+                    statBadge("Model", model)
+                }
+            }
+
+            if let error = result.error {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Text("Tested: \(result.timestamp, style: .relative) ago")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func statBadge(_ label: String, _ value: String) -> some View {
+        VStack(spacing: 2) {
+            Text(value)
+                .font(.caption.weight(.semibold))
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 6)
+                .fill(Color(.controlBackgroundColor).opacity(0.5))
+        )
+    }
+
+    private func runE2ETest() {
+        isRunningE2ETest = true
+        e2eTestResult = nil
+
+        Task {
+            let startTime = Date()
+            let testMessage = "Hello! Please respond with a brief greeting and confirm you're working properly."
+
+            do {
+                // Find or create the health check conversation
+                let conversationId = findOrCreateHealthCheckConversation()
+                await MainActor.run { e2eTestConversationId = conversationId }
+
+                // Add the test message to the conversation
+                let userMsg = ConversationMessage(role: .user, content: testMessage)
+                if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversationId }) {
+                    await MainActor.run {
+                        appState.workspace.conversations[index].messages.append(userMsg)
+                        appState.workspace.conversations[index].updatedAt = Date()
+                    }
+                }
+
+                // Send the message and collect response
+                var responseText = ""
+                let stream = chatService.chat(
+                    prompt: testMessage,
+                    systemPrompt: "You are a helpful assistant performing a system health check. Respond briefly to confirm you're working.",
+                    history: []
+                )
+
+                for try await chunk in stream {
+                    responseText += chunk
+                }
+
+                let endTime = Date()
+                let latencyMs = Int((endTime.timeIntervalSince(startTime)) * 1000)
+
+                // Add response to conversation
+                let assistantMsg = ConversationMessage(
+                    role: .assistant,
+                    content: responseText,
+                    metadata: MessageMetadata(
+                        model: chatService.loadedModelId,
+                        provider: chatService.selectedProvider?.name,
+                        tokens: chatService.generationStats?.tokensGenerated,
+                        latency: chatService.generationStats?.totalDuration
+                    )
+                )
+                if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversationId }) {
+                    await MainActor.run {
+                        appState.workspace.conversations[index].messages.append(assistantMsg)
+                        appState.workspace.conversations[index].updatedAt = Date()
+                    }
+                }
+
+                // Determine success
+                let success = !responseText.isEmpty && responseText.count > 10
+
+                await MainActor.run {
+                    e2eTestResult = E2ETestResult(
+                        success: success,
+                        testMessage: testMessage,
+                        response: responseText.isEmpty ? nil : String(responseText.prefix(200)),
+                        latencyMs: latencyMs,
+                        tokensGenerated: chatService.generationStats?.tokensGenerated,
+                        modelUsed: chatService.loadedModelId?.components(separatedBy: "/").last,
+                        error: success ? nil : "Response too short or empty",
+                        timestamp: Date()
+                    )
+                    isRunningE2ETest = false
+                }
+
+            } catch {
+                await MainActor.run {
+                    e2eTestResult = E2ETestResult(
+                        success: false,
+                        testMessage: testMessage,
+                        response: nil,
+                        latencyMs: nil,
+                        tokensGenerated: nil,
+                        modelUsed: nil,
+                        error: error.localizedDescription,
+                        timestamp: Date()
+                    )
+                    isRunningE2ETest = false
+                }
+            }
+        }
+    }
+
+    private func findOrCreateHealthCheckConversation() -> ConversationID {
+        // Look for existing health check conversation
+        if let existing = appState.workspace.conversations.first(where: { $0.title == "🏥 System Health Check" }) {
+            return existing.id
+        }
+
+        // Create new health check conversation
+        let conversation = Conversation(
+            title: "🏥 System Health Check",
+            messages: [],
+            modelId: chatService.loadedModelId,
+            providerId: chatService.selectedProvider?.id.uuidString
+        )
+
+        appState.workspace.conversations.insert(conversation, at: 0)
+        return conversation.id
+    }
+
+    // MARK: - Components
+
+    private var overallStatusBanner: some View {
+        HStack(spacing: 16) {
+            ZStack {
+                Circle()
+                    .fill(overallStatus.color.opacity(0.15))
+                    .frame(width: 60, height: 60)
+
+                Image(systemName: overallStatus.icon)
+                    .font(.system(size: 28))
+                    .foregroundStyle(overallStatus.color)
+                    .symbolEffect(.pulse, options: .speed(0.5), isActive: overallStatus == .checking)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("System Status")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+
+                Text(overallStatus.rawValue)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(overallStatus.color)
+
+                if overallStatus == .healthy {
+                    Text("All systems operational")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if overallStatus == .warning {
+                    Text("Some components need attention")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if overallStatus == .unhealthy {
+                    Text("Critical issues detected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Spacer()
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(overallStatus.color.opacity(0.08))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(overallStatus.color.opacity(0.2), lineWidth: 1)
+                )
+        )
+    }
+
+    private func healthSection(title: String, icon: String, checks: [HealthCheckItem]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                Text(title)
+                    .font(.headline)
+                Spacer()
+
+                // Section status indicator
+                let worstStatus = checks.map { $0.status }.min { s1, s2 in
+                    statusPriority(s1) > statusPriority(s2)
+                } ?? .unknown
+
+                Circle()
+                    .fill(worstStatus.color)
+                    .frame(width: 10, height: 10)
+            }
+
+            VStack(spacing: 8) {
+                if checks.isEmpty {
+                    Text("No checks available")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.vertical, 20)
+                } else {
+                    ForEach(checks) { check in
+                        healthCheckRow(check)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.controlBackgroundColor))
+        )
+    }
+
+    private func healthCheckRow(_ check: HealthCheckItem) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: check.status.icon)
+                .font(.system(size: 14))
+                .foregroundStyle(check.status.color)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(check.name)
+                    .font(.subheadline.weight(.medium))
+
+                Text(check.detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer()
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func issuesSection(issues: [HealthCheckItem]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("Issues Detected")
+                    .font(.headline)
+            }
+
+            ForEach(issues) { issue in
+                HStack(spacing: 12) {
+                    Image(systemName: issue.status.icon)
+                        .foregroundStyle(issue.status.color)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(issue.name)
+                            .font(.subheadline.weight(.medium))
+                        Text(issue.detail)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    // Suggestion button
+                    Button("Fix") {
+                        // TODO: Implement fix suggestions
+                    }
+                    .font(.caption)
+                    .buttonStyle(.bordered)
+                }
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(issue.status.color.opacity(0.1))
+                )
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.controlBackgroundColor))
+        )
+    }
+
+    private var systemInfoSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.secondary)
+                Text("System Information")
+                    .font(.headline)
+            }
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                infoRow("Conversations", "\(appState.workspace.conversations.count)")
+                infoRow("Documents", "\(appState.workspace.documents.count)")
+                infoRow("Providers", "\(providerManager.providers.count) configured")
+                infoRow("MCP Connections", "\(mcpConnectionCount)")
+                infoRow("Native Tools", "\(nativeToolCount) available")
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.controlBackgroundColor))
+        )
+    }
+
+    private func infoRow(_ label: String, _ value: String) -> some View {
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(value)
+                .font(.caption.weight(.medium))
+        }
+        .padding(.vertical, 2)
+    }
+
+    // MARK: - Health Check Logic
+
+    private func initializeHealthChecks() {
+        healthChecks = [
+            // Provider checks
+            HealthCheckItem(name: "Chat Service", category: "provider", status: .unknown, detail: "Checking..."),
+            HealthCheckItem(name: "Selected Provider", category: "provider", status: .unknown, detail: "Checking..."),
+            HealthCheckItem(name: "Model Loaded", category: "provider", status: .unknown, detail: "Checking..."),
+
+            // Agent checks
+            HealthCheckItem(name: "Local Agent", category: "agent", status: .unknown, detail: "Checking..."),
+            HealthCheckItem(name: "A2A Protocol", category: "agent", status: .unknown, detail: "Checking..."),
+
+            // MCP checks
+            HealthCheckItem(name: "MCP Manager", category: "mcp", status: .unknown, detail: "Checking..."),
+
+            // Native Integration checks
+            HealthCheckItem(name: "Slack Integration", category: "integration", status: .unknown, detail: "Checking..."),
+            HealthCheckItem(name: "Quip Integration", category: "integration", status: .unknown, detail: "Checking..."),
+
+            // Data checks
+            HealthCheckItem(name: "Workspace", category: "data", status: .unknown, detail: "Checking..."),
+            HealthCheckItem(name: "Memory Store", category: "data", status: .unknown, detail: "Checking..."),
+        ]
+    }
+
+    private func runAllHealthChecks() {
+        isRunningChecks = true
+        overallStatus = .checking
+
+        Task {
+            // Chat Service Check
+            await updateCheck(name: "Chat Service") { _ in
+                if chatService.isReady {
+                    return (.healthy, "Ready - \(chatService.providerDescription)")
+                } else if chatService.isLoadingModel {
+                    return (.warning, "Loading model...")
+                } else {
+                    return (.warning, "No provider selected")
+                }
+            }
+
+            // Selected Provider Check
+            await updateCheck(name: "Selected Provider") { _ in
+                if let provider = chatService.selectedProvider {
+                    return (.healthy, provider.name)
+                } else {
+                    return (.warning, "No provider configured")
+                }
+            }
+
+            // Model Loaded Check
+            await updateCheck(name: "Model Loaded") { _ in
+                if let modelId = chatService.loadedModelId {
+                    let shortName = modelId.components(separatedBy: "/").last ?? modelId
+                    return (.healthy, shortName)
+                } else if chatService.selectedProvider?.type == .mlx {
+                    return (.warning, "No MLX model loaded")
+                } else {
+                    return (.healthy, "Using API provider")
+                }
+            }
+
+            // Local Agent Check
+            await updateCheck(name: "Local Agent") { _ in
+                if let agent = appState.localAgent {
+                    switch agent.status {
+                    case .connected:
+                        return (.healthy, "Connected to \(agent.name)")
+                    case .connecting:
+                        return (.warning, "Connecting...")
+                    case .error(let msg):
+                        return (.unhealthy, msg)
+                    case .disconnected:
+                        return (.warning, "Disconnected")
+                    }
+                } else {
+                    return (.warning, "No agent connected")
+                }
+            }
+
+            // A2A Protocol Check
+            await updateCheck(name: "A2A Protocol") { _ in
+                if appState.hasAgentClient {
+                    let result = await appState.checkA2AHealth()
+                    if result.isHealthy {
+                        return (.healthy, "Server responding")
+                    } else {
+                        return (.unhealthy, result.error ?? "Server not responding")
+                    }
+                } else {
+                    return (.warning, "No A2A client configured")
+                }
+            }
+
+            // MCP Manager Check
+            await updateCheck(name: "MCP Manager") { _ in
+                let count = await appState.mcpManager.connectionCount
+                await MainActor.run { mcpConnectionCount = count }
+                if count == 0 {
+                    return (.warning, "No MCP servers configured")
+                } else {
+                    return (.healthy, "\(count) server(s) configured")
+                }
+            }
+
+            // Slack Integration Check
+            await updateCheck(name: "Slack Integration") { _ in
+                let hasSlack = await appState.nativeIntegrations.hasSlack
+                if hasSlack {
+                    let tools = await appState.nativeIntegrations.allTools().filter { $0.name.hasPrefix("slack_") }
+                    return (.healthy, "\(tools.count) tools available")
+                } else {
+                    return (.warning, "Not configured - add token in Settings")
+                }
+            }
+
+            // Quip Integration Check
+            await updateCheck(name: "Quip Integration") { _ in
+                let hasQuip = await appState.nativeIntegrations.hasQuip
+                if hasQuip {
+                    let tools = await appState.nativeIntegrations.allTools().filter { $0.name.hasPrefix("quip_") }
+                    return (.healthy, "\(tools.count) tools available")
+                } else {
+                    return (.warning, "Not configured - add token in Settings")
+                }
+            }
+
+            // Workspace Check
+            await updateCheck(name: "Workspace") { _ in
+                let convCount = appState.workspace.conversations.count
+                let docCount = appState.workspace.documents.count
+                return (.healthy, "\(convCount) conversations, \(docCount) documents")
+            }
+
+            // Memory Store Check
+            await updateCheck(name: "Memory Store") { _ in
+                if appState.memoryStore != nil {
+                    return (.healthy, "Initialized with embeddings")
+                } else {
+                    return (.warning, "Memory store not initialized")
+                }
+            }
+
+            // Calculate overall status
+            await MainActor.run {
+                isRunningChecks = false
+                lastFullCheck = Date()
+                calculateOverallStatus()
+            }
+        }
+    }
+
+    @MainActor
+    private func updateCheck(name: String, check: @escaping (HealthCheckItem) async -> (HealthStatus, String)) async {
+        if let index = healthChecks.firstIndex(where: { $0.name == name }) {
+            let result = await check(healthChecks[index])
+            healthChecks[index].status = result.0
+            healthChecks[index].detail = result.1
+            healthChecks[index].lastChecked = Date()
+        }
+    }
+
+    private func calculateOverallStatus() {
+        let statuses = healthChecks.map { $0.status }
+
+        if statuses.contains(.unhealthy) {
+            overallStatus = .unhealthy
+        } else if statuses.contains(.warning) {
+            overallStatus = .warning
+        } else if statuses.allSatisfy({ $0 == .healthy }) {
+            overallStatus = .healthy
+        } else {
+            overallStatus = .unknown
+        }
+    }
+
+    private func statusPriority(_ status: HealthStatus) -> Int {
+        switch status {
+        case .unhealthy: return 0
+        case .warning: return 1
+        case .unknown: return 2
+        case .checking: return 3
+        case .healthy: return 4
+        }
     }
 }

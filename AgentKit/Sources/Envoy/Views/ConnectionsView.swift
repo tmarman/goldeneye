@@ -6,7 +6,7 @@ import SwiftUI
 /// MCP server connections management view
 struct ConnectionsView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var connections: [MCPConnection] = sampleConnections
+    @State private var connections: [MCPConnection] = []  // No sample data
     @State private var showAddConnectionSheet = false
 
     var body: some View {

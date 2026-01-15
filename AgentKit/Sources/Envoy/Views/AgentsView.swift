@@ -1,124 +1,244 @@
 import AgentKit
 import SwiftUI
 
+// MARK: - Agents View (Simple Roster)
+
 struct AgentsView: View {
     @EnvironmentObject private var appState: AppState
-    @State private var selectedAgent: ConnectedAgent?
-    @State private var isScanning = false
+    @State private var selectedAgentId: String?
+
+    /// All agents - registered + recruited
+    private var allAgents: [AgentRosterItem] {
+        var items: [AgentRosterItem] = []
+
+        // Add registered agents
+        for agent in appState.registeredAgents {
+            items.append(AgentRosterItem(
+                id: agent.id.rawValue,
+                name: agent.name,
+                profile: agent.profile,
+                capabilities: Array(agent.capabilities),
+                isRecruited: false
+            ))
+        }
+
+        // Add recruited agents from templates
+        for agent in appState.recruitedAgents {
+            // Map template skills to capabilities (best effort)
+            let capabilities: [AgentCapability] = agent.template.skills.compactMap { skill in
+                AgentCapability(rawValue: skill.lowercased())
+            }
+            items.append(AgentRosterItem(
+                id: agent.id,
+                name: agent.name,
+                profile: .concierge, // Default profile for template-based agents
+                capabilities: capabilities,
+                isRecruited: true
+            ))
+        }
+
+        return items
+    }
 
     var body: some View {
-        HSplitView {
-            // Agent list
-            VStack(spacing: 0) {
-                List(selection: $selectedAgent) {
-                    // Local agent section
-                    Section("Local") {
-                        if let local = appState.localAgent {
-                            AgentListRow(agent: local)
-                                .tag(local)
-                        }
-                    }
-
-                    // Remote agents section
-                    Section("Remote") {
-                        if appState.connectedAgents.isEmpty {
-                            Text("No remote agents")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(appState.connectedAgents) { agent in
-                                AgentListRow(agent: agent)
-                                    .tag(agent)
-                            }
-                        }
-                    }
-
-                    // Discovered agents (Bonjour)
-                    Section("Discovered") {
-                        if isScanning {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.7)
-                                Text("Scanning...")
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else {
-                            Text("No agents found on network")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .listStyle(.sidebar)
-            }
-            .frame(minWidth: 250)
-
-            // Agent detail
-            if let agent = selectedAgent {
-                AgentDetailView(agent: agent)
+        Group {
+            if allAgents.isEmpty {
+                emptyState
             } else {
-                agentEmptyState
+                agentList
             }
         }
         .navigationTitle("Agents")
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    isScanning = true
-                    Task {
-                        try? await Task.sleep(for: .seconds(3))
-                        isScanning = false
-                    }
+                    appState.showAgentRecruitment = true
                 } label: {
-                    Label("Scan", systemImage: "antenna.radiowaves.left.and.right")
+                    Label("Add Agent", systemImage: "plus")
                 }
 
-                Button {
-                    appState.showConnectSheet = true
+                Menu {
+                    Button(action: { appState.showAgentBuilder = true }) {
+                        Label("Create Custom Agent", systemImage: "sparkles")
+                    }
+                    Button(action: { appState.showConnectSheet = true }) {
+                        Label("Connect Remote Server", systemImage: "network")
+                    }
                 } label: {
-                    Label("Connect", systemImage: "plus")
+                    Image(systemName: "ellipsis.circle")
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private var agentEmptyState: some View {
+    private var emptyState: some View {
         VStack(spacing: 24) {
             VStack(spacing: 12) {
-                Image(systemName: "point.3.connected.trianglepath.dotted")
+                Image(systemName: "person.2")
                     .font(.system(size: 64))
                     .foregroundStyle(.secondary)
 
-                Text("No Agent Selected")
+                Text("No Agents Yet")
                     .font(.title2.bold())
 
-                Text("Select an agent from the sidebar or connect a new one to get started")
+                Text("Add an agent to start chatting and delegating tasks")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
-                    .frame(maxWidth: 400)
+                    .frame(maxWidth: 300)
             }
 
-            HStack(spacing: 12) {
-                Button {
-                    isScanning = true
-                    Task {
-                        try? await Task.sleep(for: .seconds(3))
-                        isScanning = false
-                    }
-                } label: {
-                    Label("Scan Network", systemImage: "antenna.radiowaves.left.and.right")
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    appState.showConnectSheet = true
-                } label: {
-                    Label("Connect Agent", systemImage: "plus.circle.fill")
-                }
-                .buttonStyle(.borderedProminent)
+            Button {
+                appState.showAgentRecruitment = true
+            } label: {
+                Label("Add Agent", systemImage: "plus.circle.fill")
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var agentList: some View {
+        List(selection: $selectedAgentId) {
+            ForEach(allAgents) { agent in
+                AgentRosterRow(agent: agent)
+                    .tag(agent.id)
+            }
+            .onDelete(perform: deleteAgents)
+        }
+        .listStyle(.inset(alternatesRowBackgrounds: true))
+    }
+
+    private func deleteAgents(at offsets: IndexSet) {
+        // Remove agents at the specified indices
+        for index in offsets {
+            let agent = allAgents[index]
+            if agent.isRecruited {
+                appState.recruitedAgents.removeAll { $0.id == agent.id }
+            }
+            // Can't delete registered agents (they're system-level)
+        }
+    }
+}
+
+// MARK: - Agent Roster Item
+
+struct AgentRosterItem: Identifiable {
+    let id: String
+    let name: String
+    let profile: AgentProfile
+    let capabilities: [AgentCapability]
+    let isRecruited: Bool
+}
+
+// MARK: - Agent Roster Row
+
+struct AgentRosterRow: View {
+    let agent: AgentRosterItem
+    @EnvironmentObject private var appState: AppState
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 16) {
+            // Avatar
+            Circle()
+                .fill(colorFor(agent.profile).gradient)
+                .frame(width: 44, height: 44)
+                .overlay {
+                    Image(systemName: iconFor(agent.profile))
+                        .font(.title3)
+                        .foregroundStyle(.white)
+                }
+
+            // Info
+            VStack(alignment: .leading, spacing: 4) {
+                Text(agent.name)
+                    .font(.headline)
+
+                Text(agent.profile.rawValue.capitalized)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            // Capabilities preview
+            HStack(spacing: 4) {
+                ForEach(agent.capabilities.prefix(3), id: \.self) { cap in
+                    Text(cap.rawValue)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.1), in: Capsule())
+                        .foregroundStyle(.secondary)
+                }
+
+                if agent.capabilities.count > 3 {
+                    Text("+\(agent.capabilities.count - 3)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+
+            // Chat button
+            Button {
+                startChatWithAgent()
+            } label: {
+                Image(systemName: "bubble.left")
+            }
+            .buttonStyle(.borderless)
+            .help("Chat with \(agent.name)")
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .background(isHovered ? Color.gray.opacity(0.05) : Color.clear)
+        .onHover { isHovered = $0 }
+    }
+
+    private func startChatWithAgent() {
+        // Find or create conversation with this agent
+        if let conv = appState.workspace.conversations.first(where: { $0.agentName == agent.name }) {
+            appState.selectedConversationId = conv.id
+            appState.selectedSidebarItem = .conversations
+        } else {
+            let newConv = Conversation(
+                title: "Chat with \(agent.name)",
+                messages: [],
+                agentName: agent.name
+            )
+            appState.workspace.conversations.insert(newConv, at: 0)
+            appState.selectedConversationId = newConv.id
+            appState.selectedSidebarItem = .conversations
+        }
+    }
+
+    private func iconFor(_ profile: AgentProfile) -> String {
+        switch profile {
+        case .concierge: return "person.crop.circle.badge.questionmark"
+        case .founder: return "lightbulb.fill"
+        case .coach: return "figure.mind.and.body"
+        case .integrator: return "gearshape.2.fill"
+        case .librarian: return "books.vertical.fill"
+        case .weaver: return "arrow.triangle.merge"
+        case .critic: return "eye.fill"
+        case .executor: return "bolt.fill"
+        case .guardian: return "shield.fill"
+        }
+    }
+
+    private func colorFor(_ profile: AgentProfile) -> Color {
+        switch profile {
+        case .concierge: return .blue
+        case .founder: return .purple
+        case .coach: return .orange
+        case .integrator: return .green
+        case .librarian: return .brown
+        case .weaver: return .pink
+        case .critic: return .red
+        case .executor: return .yellow
+        case .guardian: return .gray
+        }
     }
 }
 

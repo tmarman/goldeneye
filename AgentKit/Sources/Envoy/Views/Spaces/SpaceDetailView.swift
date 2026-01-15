@@ -3,247 +3,332 @@ import SwiftUI
 
 // MARK: - Space Detail View
 
-/// Detailed view of a Space showing channel chat, documents, and markdown viewer
+/// Slack-like view of a Space with channel messages, rich content, and input
 struct SpaceDetailView: View {
     let spaceId: SpaceID
     @EnvironmentObject private var appState: AppState
-    @State private var selectedTab: DetailTab = .chat
-    @State private var selectedDocument: Document?
     @State private var messageInput = ""
-
-    enum DetailTab: String, CaseIterable {
-        case chat = "Chat"
-        case documents = "Documents"
-        case both = "Split View"
-    }
+    @State private var showProfilePanel = false
+    @State private var selectedMemberId: String?
+    @FocusState private var isInputFocused: Bool
 
     var space: SpaceViewModel? {
+        // Only use actual spaces
         appState.spaces.first { SpaceID($0.id) == spaceId }
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            spaceHeader
-
-            Divider()
-
-            // Tab selector
-            tabSelector
-
-            Divider()
-
-            // Content based on selected tab
-            contentView
-        }
-        .navigationTitle(space?.name ?? "Space")
-        .task {
-            await loadSpaceContent()
-        }
+    var selectedChannel: ChannelViewModel? {
+        guard let channelId = appState.selectedChannelId else { return nil }
+        return space?.channels.first { $0.id == channelId }
     }
 
-    // MARK: - Header
+    /// Get conversations for this space/channel
+    var channelMessages: [Conversation] {
+        // Filter conversations that belong to this space
+        // For now, show all conversations if no space filter is set
+        appState.workspace.conversations
+    }
 
-    private var spaceHeader: some View {
-        HStack {
-            if let space = space {
-                // Space icon
-                RoundedRectangle(cornerRadius: 8)
+    var body: some View {
+        HStack(spacing: 0) {
+            // Main content area
+            VStack(spacing: 0) {
+                // Channel header
+                channelHeader
+
+                Divider()
+
+                // Message feed (main content)
+                messageFeed
+
+                Divider()
+
+                // Input area
+                messageInputArea
+            }
+
+            // Profile panel (optional, shown when clicking on a user)
+            if showProfilePanel, let memberId = selectedMemberId {
+                Divider()
+                profilePanel(for: memberId)
+                    .frame(width: 280)
+            }
+        }
+        .navigationTitle(space?.name ?? "Space")
+    }
+
+    // MARK: - Channel Header
+
+    private var channelHeader: some View {
+        HStack(spacing: 12) {
+            // Channel icon and name
+            if let channel = selectedChannel {
+                Image(systemName: channel.icon)
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+
+                Text(channel.name)
+                    .font(.title2.weight(.semibold))
+            } else if let space = space {
+                RoundedRectangle(cornerRadius: 6)
                     .fill(space.color.gradient)
-                    .frame(width: 32, height: 32)
+                    .frame(width: 28, height: 28)
                     .overlay {
                         Image(systemName: space.icon)
+                            .font(.caption)
                             .foregroundStyle(.white)
                     }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(space.name)
-                        .font(.headline)
+                Text(space.name)
+                    .font(.title2.weight(.semibold))
+            }
 
-                    if let description = space.description {
-                        Text(description)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
+            Spacer()
+
+            // Member count and actions
+            HStack(spacing: 16) {
+                if let channel = selectedChannel {
+                    Label("\(channel.threadCount)", systemImage: "bubble.left.and.bubble.right")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
 
-                Spacer()
-
-                // Stats
-                HStack(spacing: 16) {
-                    Label("\(space.documentCount)", systemImage: "doc.text")
-                    Label("\(space.contributorCount)", systemImage: "person.2")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-                // Edit button
-                Button(action: { /* TODO: Edit space */ }) {
-                    Image(systemName: "pencil.circle.fill")
+                Button(action: { showProfilePanel.toggle() }) {
+                    Image(systemName: "person.crop.circle")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Edit space settings")
+                .help("Show members")
+
+                Button(action: { /* TODO: Search */ }) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Search")
+
+                Button(action: { /* TODO: More options */ }) {
+                    Image(systemName: "ellipsis")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("More options")
             }
         }
-        .padding()
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
         .background(.ultraThinMaterial)
     }
 
-    // MARK: - Tab Selector
+    // MARK: - Message Feed
 
-    private var tabSelector: some View {
-        HStack(spacing: 0) {
-            ForEach(DetailTab.allCases, id: \.self) { tab in
-                Button(action: { selectedTab = tab }) {
-                    HStack {
-                        Image(systemName: tabIcon(for: tab))
-                        Text(tab.rawValue)
+    private var messageFeed: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    // If no messages, show welcome message
+                    if channelMessages.isEmpty {
+                        welcomeMessage
+                    } else {
+                        // Group messages by date
+                        ForEach(channelMessages) { conversation in
+                            // Each conversation becomes a thread starter
+                            ForEach(conversation.messages) { message in
+                                MessageRow(
+                                    message: message,
+                                    conversationTitle: conversation.title,
+                                    agentName: conversation.agentName,
+                                    onMemberTap: { memberId in
+                                        selectedMemberId = memberId
+                                        showProfilePanel = true
+                                    }
+                                )
+                                .id(message.id)
+                            }
+                        }
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(selectedTab == tab ? Color.accentColor.opacity(0.15) : Color.clear)
-                    .foregroundStyle(selectedTab == tab ? .primary : .secondary)
+                }
+                .padding(.vertical, 16)
+            }
+        }
+    }
+
+    private var welcomeMessage: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Channel intro
+            if let channel = selectedChannel {
+                HStack {
+                    Image(systemName: channel.icon)
+                        .font(.system(size: 48))
+                        .foregroundStyle(.secondary)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Welcome to #\(channel.name)")
+                            .font(.title.weight(.bold))
+
+                        Text("This is the start of the \(channel.name) channel.")
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } else if let space = space {
+                HStack {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(space.color.gradient)
+                        .frame(width: 64, height: 64)
+                        .overlay {
+                            Image(systemName: space.icon)
+                                .font(.title)
+                                .foregroundStyle(.white)
+                        }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Welcome to \(space.name)")
+                            .font(.title.weight(.bold))
+
+                        if let desc = space.description {
+                            Text(desc)
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+
+            // Quick actions
+            HStack(spacing: 12) {
+                SpaceQuickAction(
+                    icon: "bubble.left.and.bubble.right",
+                    label: "Start a conversation",
+                    color: .blue
+                ) {
+                    // TODO: Start new conversation
+                }
+
+                SpaceQuickAction(
+                    icon: "doc.badge.plus",
+                    label: "Create a document",
+                    color: .green
+                ) {
+                    appState.showNewDocumentSheet = true
+                }
+
+                SpaceQuickAction(
+                    icon: "person.badge.plus",
+                    label: "Invite an agent",
+                    color: .purple
+                ) {
+                    appState.showAgentRecruitment = true
+                }
+            }
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - Message Input
+
+    private var messageInputArea: some View {
+        VStack(spacing: 0) {
+            // Formatting toolbar
+            HStack(spacing: 4) {
+                ForEach(formattingButtons, id: \.icon) { button in
+                    Button(action: button.action) {
+                        Image(systemName: button.icon)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                    .help(button.label)
+                }
+
+                Spacer()
+
+                // Mention and emoji
+                Button(action: { /* TODO: Mention */ }) {
+                    Image(systemName: "at")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { /* TODO: Emoji */ }) {
+                    Image(systemName: "face.smiling")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+
+                Button(action: { /* TODO: Attach */ }) {
+                    Image(systemName: "paperclip")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-    }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
 
-    private func tabIcon(for tab: DetailTab) -> String {
-        switch tab {
-        case .chat: return "message"
-        case .documents: return "doc.text.fill"
-        case .both: return "rectangle.split.2x1"
-        }
-    }
-
-    // MARK: - Content View
-
-    @ViewBuilder
-    private var contentView: some View {
-        switch selectedTab {
-        case .chat:
-            chatView
-        case .documents:
-            documentsView
-        case .both:
-            splitView
-        }
-    }
-
-    // MARK: - Chat View
-
-    private var chatView: some View {
-        VStack(spacing: 0) {
-            // Messages
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    // TODO: Real messages from channel
-                    ForEach(sampleMessages) { message in
-                        SpaceMessageBubble(message: message)
-                    }
-                }
-                .padding()
-            }
-
-            Divider()
-
-            // Input field
-            HStack(spacing: 12) {
-                TextField("Type a message...", text: $messageInput)
+            // Text input
+            HStack(alignment: .bottom, spacing: 12) {
+                TextField("Message \(selectedChannel?.name ?? space?.name ?? "channel")...", text: $messageInput, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .padding(8)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .lineLimit(1...5)
+                    .focused($isInputFocused)
+                    .onSubmit {
+                        if !messageInput.isEmpty {
+                            sendMessage()
+                        }
+                    }
 
                 Button(action: sendMessage) {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.title2)
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(messageInput.isEmpty ? Color.secondary : Color.blue)
                 }
                 .buttonStyle(.plain)
                 .disabled(messageInput.isEmpty)
             }
-            .padding()
-            .background(.ultraThinMaterial)
-        }
-    }
-
-    // MARK: - Documents View
-
-    private var documentsView: some View {
-        HSplitView {
-            // Document tree
-            documentTree
-                .frame(minWidth: 200, idealWidth: 250)
-
-            // Document viewer
-            if let doc = selectedDocument {
-                documentViewer(for: doc)
-                    .frame(minWidth: 400)
-            } else {
-                emptyDocumentState
-            }
-        }
-    }
-
-    private var documentTree: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Tree header
-            HStack {
-                Text("Documents")
-                    .font(.headline)
-
-                Spacer()
-
-                Button(action: { /* TODO: New document */ }) {
-                    Image(systemName: "plus.circle.fill")
-                        .foregroundStyle(.blue)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding()
-
-            Divider()
-
-            // Document list
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    // TODO: Real documents from space
-                    ForEach(sampleDocuments) { doc in
-                        SpaceDocumentRow(document: doc, isSelected: selectedDocument?.id == doc.id)
-                            .onTapGesture {
-                                selectedDocument = doc
-                            }
-                    }
-                }
-                .padding(8)
-            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .padding(.horizontal, 16)
+            .padding(.bottom, 16)
         }
         .background(.ultraThinMaterial)
     }
 
-    @ViewBuilder
-    private func documentViewer(for document: Document) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Document header
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(document.title)
-                        .font(.title3.weight(.semibold))
+    private var formattingButtons: [(icon: String, label: String, action: () -> Void)] {
+        [
+            ("bold", "Bold", {}),
+            ("italic", "Italic", {}),
+            ("strikethrough", "Strikethrough", {}),
+            ("link", "Link", {}),
+            ("list.bullet", "Bullet list", {}),
+            ("list.number", "Numbered list", {}),
+            ("chevron.left.forwardslash.chevron.right", "Code", {}),
+        ]
+    }
 
-                    Text("Updated \(document.updatedAt, style: .relative)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+    // MARK: - Profile Panel
+
+    private func profilePanel(for memberId: String) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Text("Profile")
+                    .font(.headline)
 
                 Spacer()
 
-                Button(action: { /* TODO: Edit document */ }) {
-                    Image(systemName: "pencil.circle")
+                Button(action: { showProfilePanel = false }) {
+                    Image(systemName: "xmark")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
             }
@@ -251,45 +336,62 @@ struct SpaceDetailView: View {
 
             Divider()
 
-            // Markdown renderer
             ScrollView {
-                MarkdownView(document: document)
-                    .padding()
+                VStack(spacing: 20) {
+                    // Avatar
+                    Circle()
+                        .fill(Color.purple.gradient)
+                        .frame(width: 80, height: 80)
+                        .overlay {
+                            Text("TA")
+                                .font(.title)
+                                .foregroundStyle(.white)
+                        }
+
+                    // Name and role
+                    VStack(spacing: 4) {
+                        Text("Technical Agent")
+                            .font(.headline)
+
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(.green)
+                                .frame(width: 8, height: 8)
+                            Text("Active")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Divider()
+
+                    // Contact info
+                    VStack(alignment: .leading, spacing: 12) {
+                        ProfileInfoRow(icon: "envelope", label: "Email", value: "agent@local")
+                        ProfileInfoRow(icon: "clock", label: "Local time", value: "4:41 PM")
+                        ProfileInfoRow(icon: "calendar", label: "Joined", value: "January 2025")
+                    }
+                    .padding(.horizontal)
+
+                    Divider()
+
+                    // Actions
+                    HStack(spacing: 12) {
+                        Button(action: { /* TODO: Message */ }) {
+                            Label("Message", systemImage: "bubble.left")
+                        }
+                        .buttonStyle(.bordered)
+
+                        Button(action: { /* TODO: Call */ }) {
+                            Label("Huddle", systemImage: "phone")
+                        }
+                        .buttonStyle(.bordered)
+                    }
+                }
+                .padding()
             }
         }
-        .background(Color(nsColor: .textBackgroundColor))
-    }
-
-    private var emptyDocumentState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "doc.text")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-
-            Text("Select a document")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
-            Text("Choose a document from the list to view it here")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // MARK: - Split View
-
-    private var splitView: some View {
-        HSplitView {
-            // Chat on left
-            chatView
-                .frame(minWidth: 300, idealWidth: 400)
-
-            // Documents on right
-            documentsView
-                .frame(minWidth: 400)
-        }
+        .background(.ultraThinMaterial)
     }
 
     // MARK: - Actions
@@ -297,242 +399,177 @@ struct SpaceDetailView: View {
     private func sendMessage() {
         guard !messageInput.isEmpty else { return }
 
-        // TODO: Send message to channel
-        print("Sending message: \(messageInput)")
+        // Create new conversation message
+        Task {
+            // For now, add to first conversation or create new one
+            if var conversation = appState.workspace.conversations.first {
+                let message = ConversationMessage(
+                    role: .user,
+                    content: messageInput
+                )
+                conversation.messages.append(message)
 
-        messageInput = ""
-    }
+                // Update the conversation in workspace
+                if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
+                    appState.workspace.conversations[index] = conversation
+                }
+            } else {
+                // Create new conversation
+                let conversation = Conversation(
+                    title: messageInput.prefix(50).description,
+                    messages: [
+                        ConversationMessage(role: .user, content: messageInput)
+                    ],
+                    agentName: "Assistant"
+                )
+                appState.workspace.conversations.insert(conversation, at: 0)
+            }
 
-    private func loadSpaceContent() async {
-        // TODO: Load real space content
-        // - Load channel messages
-        // - Load documents
-        // - Load participants
+            messageInput = ""
+        }
     }
 }
 
-// MARK: - Message Bubble
+// MARK: - Message Row
 
-private struct SpaceMessageBubble: View {
-    let message: SampleMessage
+private struct MessageRow: View {
+    let message: ConversationMessage
+    let conversationTitle: String
+    let agentName: String?
+    let onMemberTap: (String) -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
             // Avatar
-            Circle()
-                .fill(message.isUser ? Color.blue.gradient : Color.purple.gradient)
-                .frame(width: 32, height: 32)
-                .overlay {
-                    Text(message.senderInitial)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.white)
-                }
+            Button(action: { onMemberTap(message.role == .user ? "user" : "agent") }) {
+                Circle()
+                    .fill(avatarGradient)
+                    .frame(width: 36, height: 36)
+                    .overlay {
+                        Text(avatarInitial)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.white)
+                    }
+            }
+            .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(message.sender)
+                // Name and timestamp
+                HStack(spacing: 8) {
+                    Text(senderName)
                         .font(.subheadline.weight(.semibold))
 
                     Text(message.timestamp, style: .time)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
                 }
 
+                // Message content
                 Text(message.content)
                     .font(.body)
+                    .textSelection(.enabled)
 
-                // Tool call indicator
-                if message.isTool {
+                // Tool indicator if applicable
+                if let metadata = message.metadata, metadata.model != nil {
                     HStack(spacing: 6) {
-                        Image(systemName: "gearshape")
-                            .font(.caption)
-                        Text("Tool: \(message.toolName ?? "unknown")")
+                        Image(systemName: "sparkles")
+                            .font(.caption2)
+                        Text("via \(metadata.model ?? "AI")")
                             .font(.caption)
                     }
-                    .padding(6)
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 6))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
                 }
+            }
+
+            Spacer()
+
+            // Hover actions
+            if isHovered {
+                HStack(spacing: 4) {
+                    MessageActionButton(icon: "face.smiling", tooltip: "React") {}
+                    MessageActionButton(icon: "arrowshape.turn.up.left", tooltip: "Reply") {}
+                    MessageActionButton(icon: "bookmark", tooltip: "Bookmark") {}
+                    MessageActionButton(icon: "ellipsis", tooltip: "More") {}
+                }
+                .transition(.opacity)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 8)
+        .background(isHovered ? Color.gray.opacity(0.05) : Color.clear)
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
             }
         }
     }
+
+    private var senderName: String {
+        message.role == .user ? "You" : (agentName ?? "Assistant")
+    }
+
+    private var avatarInitial: String {
+        String(senderName.prefix(1))
+    }
+
+    private var avatarGradient: LinearGradient {
+        let color: Color = message.role == .user ? .blue : .purple
+        return LinearGradient(colors: [color, color.opacity(0.8)], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
 }
 
-// MARK: - Document Row
+// MARK: - Supporting Views
 
-private struct SpaceDocumentRow: View {
-    let document: Document
-    let isSelected: Bool
+private struct SpaceQuickAction: View {
+    let icon: String
+    let label: String
+    let color: Color
+    let action: () -> Void
+
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: documentIcon)
-                .foregroundStyle(.blue)
-                .frame(width: 20)
-
-            Text(document.title.isEmpty ? "Untitled" : document.title)
-                .font(.subheadline)
-                .lineLimit(1)
-
-            Spacer()
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.subheadline)
+                Text(label)
+                    .font(.subheadline)
+            }
+            .foregroundStyle(color)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(color.opacity(isHovered ? 0.15 : 0.1), in: RoundedRectangle(cornerRadius: 8))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(isSelected ? Color.accentColor.opacity(0.2) : (isHovered ? Color.gray.opacity(0.1) : Color.clear))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .onHover { hovering in
-            isHovered = hovering
-        }
-    }
-
-    private var documentIcon: String {
-        // Determine icon based on document content
-        return "doc.text"
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
     }
 }
 
-// MARK: - Markdown View
-
-private struct MarkdownView: View {
-    let document: Document
+private struct ProfileInfoRow: View {
+    let icon: String
+    let label: String
+    let value: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ForEach(document.blocks) { block in
-                blockView(for: block)
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Text(value)
+                    .font(.subheadline)
             }
-        }
-    }
-
-    @ViewBuilder
-    private func blockView(for block: Block) -> some View {
-        switch block {
-        case .text(let textBlock):
-            Text(textBlock.content)
-                .font(fontFor(textBlock.style))
-
-        case .heading(let heading):
-            Text(heading.content)
-                .font(headingFont(for: heading.level))
-                .fontWeight(.bold)
-
-        case .code(let code):
-            Text(code.content)
-                .font(.system(.body, design: .monospaced))
-                .padding(12)
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-
-        case .quote(let quote):
-            HStack(alignment: .top, spacing: 12) {
-                Rectangle()
-                    .fill(Color.accentColor)
-                    .frame(width: 4)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(quote.content)
-                        .font(.body.italic())
-
-                    if let attribution = quote.attribution {
-                        Text("— \(attribution)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .padding(.vertical, 8)
-
-        case .bulletList(let list):
-            ForEach(list.items) { item in
-                HStack(alignment: .top, spacing: 8) {
-                    Text("•")
-                    Text(item.content)
-                }
-            }
-
-        case .numberedList(let list):
-            ForEach(Array(list.items.enumerated()), id: \.element.id) { index, item in
-                HStack(alignment: .top, spacing: 8) {
-                    Text("\(index + 1).")
-                        .fontWeight(.semibold)
-                    Text(item.content)
-                }
-            }
-
-        case .divider:
-            Divider()
-
-        case .callout(let callout):
-            HStack(alignment: .top, spacing: 12) {
-                Text(callout.icon)
-                    .font(.title2)
-
-                Text(callout.content)
-            }
-            .padding(12)
-            .background(calloutColor(for: callout.style), in: RoundedRectangle(cornerRadius: 8))
-
-        default:
-            Text(block.extractContent())
-        }
-    }
-
-    private func fontFor(_ style: TextStyle) -> Font {
-        switch style {
-        case .body: return .body
-        case .caption: return .caption
-        case .strong: return .body.weight(.semibold)
-        }
-    }
-
-    private func headingFont(for level: HeadingLevel) -> Font {
-        switch level {
-        case .h1: return .largeTitle
-        case .h2: return .title
-        case .h3: return .title3
-        }
-    }
-
-    private func calloutColor(for style: CalloutStyle) -> Color {
-        switch style {
-        case .info: return .blue.opacity(0.1)
-        case .warning: return .orange.opacity(0.1)
-        case .success: return .green.opacity(0.1)
-        case .error: return .red.opacity(0.1)
         }
     }
 }
-
-// MARK: - Sample Data (for demo)
-
-private struct SampleMessage: Identifiable {
-    let id = UUID()
-    let sender: String
-    let content: String
-    let timestamp: Date
-    let isUser: Bool
-    let isTool: Bool
-    let toolName: String?
-
-    var senderInitial: String {
-        String(sender.prefix(1))
-    }
-}
-
-private let sampleMessages: [SampleMessage] = [
-    SampleMessage(sender: "You", content: "Let's review the architecture for the new channel system", timestamp: Date().addingTimeInterval(-3600), isUser: true, isTool: false, toolName: nil),
-    SampleMessage(sender: "Technical Agent", content: "I'll analyze the codebase structure", timestamp: Date().addingTimeInterval(-3500), isUser: false, isTool: true, toolName: "analyze_code"),
-    SampleMessage(sender: "Technical Agent", content: "The architecture looks good. I'd suggest adding the EventBus enhancement first, then wire up the ChannelView.", timestamp: Date().addingTimeInterval(-3400), isUser: false, isTool: false, toolName: nil),
-]
-
-private let sampleDocuments: [Document] = [
-    Document(title: "Architecture Overview", blocks: [
-        .heading(HeadingBlock(content: "System Architecture", level: .h1)),
-        .text(TextBlock(content: "This document describes the overall system architecture.")),
-    ]),
-    Document(title: "Meeting Notes", blocks: [
-        .heading(HeadingBlock(content: "Team Meeting - Jan 14", level: .h2)),
-    ]),
-    Document(title: "TODO List", blocks: [
-        .heading(HeadingBlock(content: "Tasks", level: .h2)),
-    ]),
-]

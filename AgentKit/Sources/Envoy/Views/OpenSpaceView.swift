@@ -24,27 +24,35 @@ struct OpenSpaceView: View {
         case notes = "Notes Only"
     }
 
+    enum SuggestionType {
+        case note
+        case tasks(count: Int)
+        case event
+        case connection
+    }
+
     struct AgentSuggestion: Identifiable {
         let id = UUID()
         let icon: String
         let action: String
         let detail: String?
         let color: Color
+        let type: SuggestionType
 
         static func note() -> AgentSuggestion {
-            AgentSuggestion(icon: "note.text", action: "Save as note", detail: nil, color: .blue)
+            AgentSuggestion(icon: "note.text", action: "Save as note", detail: nil, color: .blue, type: .note)
         }
 
         static func tasks(count: Int) -> AgentSuggestion {
-            AgentSuggestion(icon: "checklist", action: "Extract \(count) task\(count == 1 ? "" : "s")", detail: nil, color: .orange)
+            AgentSuggestion(icon: "checklist", action: "Extract \(count) task\(count == 1 ? "" : "s")", detail: nil, color: .orange, type: .tasks(count: count))
         }
 
         static func event(title: String) -> AgentSuggestion {
-            AgentSuggestion(icon: "calendar.badge.plus", action: "Create event", detail: title, color: .green)
+            AgentSuggestion(icon: "calendar.badge.plus", action: "Create event", detail: title, color: .green, type: .event)
         }
 
         static func connection(to: String) -> AgentSuggestion {
-            AgentSuggestion(icon: "link", action: "Relates to", detail: to, color: .purple)
+            AgentSuggestion(icon: "link", action: "Relates to", detail: to, color: .purple, type: .connection)
         }
     }
 
@@ -195,28 +203,35 @@ struct OpenSpaceView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 ForEach(agentSuggestions) { suggestion in
-                    HStack(spacing: 8) {
-                        Image(systemName: suggestion.icon)
-                            .font(.caption)
-                            .foregroundStyle(suggestion.color)
-                            .frame(width: 16)
-
-                        Text(suggestion.action)
-                            .font(.caption)
-
-                        if let detail = suggestion.detail {
-                            Text("·")
-                                .foregroundStyle(.tertiary)
-                            Text(detail)
+                    Button(action: { executeSuggestion(suggestion) }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: suggestion.icon)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
+                                .foregroundStyle(suggestion.color)
+                                .frame(width: 16)
 
-                        Spacer()
+                            Text(suggestion.action)
+                                .font(.caption)
+
+                            if let detail = suggestion.detail {
+                                Text("·")
+                                    .foregroundStyle(.tertiary)
+                                Text(detail)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+
+                            Image(systemName: "chevron.right")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(suggestion.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(suggestion.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                    .buttonStyle(.plain)
                 }
             }
         }
@@ -364,6 +379,25 @@ struct OpenSpaceView: View {
         }
 
         agentSuggestions = suggestions
+    }
+
+    private func executeSuggestion(_ suggestion: AgentSuggestion) {
+        guard !quickInput.isEmpty else { return }
+
+        Task {
+            // Submit as text - the processor will extract tasks/events based on content
+            await appState.submitCapture(quickInput, type: .text)
+
+            switch suggestion.type {
+            case .tasks(let count):
+                print("✅ Extracted \(count) task(s)")
+            default:
+                break
+            }
+
+            quickInput = ""
+            agentSuggestions = []
+        }
     }
 
     // MARK: - Tab Selector

@@ -10,11 +10,11 @@ struct SpacesListView: View {
     @State private var searchText = ""
 
     var filteredSpaces: [SpaceViewModel] {
-        let allSpaces = appState.spaces.isEmpty ? sampleSpaces : appState.spaces
+        // Only use actual spaces - no sample data
         if searchText.isEmpty {
-            return allSpaces
+            return appState.spaces
         }
-        return allSpaces.filter {
+        return appState.spaces.filter {
             $0.name.localizedCaseInsensitiveContains(searchText)
         }
     }
@@ -371,7 +371,7 @@ struct NewSpaceSheet: View {
 
 // MARK: - Sample Data (used when no real spaces exist)
 
-private let sampleSpaces: [SpaceViewModel] = [
+let sampleSpaces: [SpaceViewModel] = [
     SpaceViewModel(
         name: "Work Projects",
         description: "All work-related projects and documentation",
@@ -381,7 +381,12 @@ private let sampleSpaces: [SpaceViewModel] = [
         documentCount: 24,
         contributorCount: 3,
         updatedAt: Date().addingTimeInterval(-3600),
-        isStarred: true
+        isStarred: true,
+        channels: [
+            ChannelViewModel(name: "general", icon: "number", unreadCount: 3, threadCount: 12),
+            ChannelViewModel(name: "planning", icon: "number", unreadCount: 0, threadCount: 8),
+            ChannelViewModel(name: "design", icon: "number", unreadCount: 1, threadCount: 5)
+        ]
     ),
     SpaceViewModel(
         name: "Research",
@@ -392,7 +397,12 @@ private let sampleSpaces: [SpaceViewModel] = [
         documentCount: 47,
         contributorCount: 2,
         updatedAt: Date().addingTimeInterval(-7200),
-        isStarred: true
+        isStarred: true,
+        channels: [
+            ChannelViewModel(name: "papers", icon: "doc.text", unreadCount: 2, threadCount: 24),
+            ChannelViewModel(name: "notes", icon: "note.text", unreadCount: 0, threadCount: 15),
+            ChannelViewModel(name: "ideas", icon: "lightbulb", unreadCount: 5, threadCount: 8)
+        ]
     ),
     SpaceViewModel(
         name: "Personal Goals",
@@ -403,7 +413,11 @@ private let sampleSpaces: [SpaceViewModel] = [
         documentCount: 12,
         contributorCount: 1,
         updatedAt: Date().addingTimeInterval(-86400),
-        isStarred: false
+        isStarred: false,
+        channels: [
+            ChannelViewModel(name: "career", icon: "briefcase", unreadCount: 0, threadCount: 4),
+            ChannelViewModel(name: "health", icon: "heart", unreadCount: 0, threadCount: 6)
+        ]
     ),
     SpaceViewModel(
         name: "Side Projects",
@@ -414,6 +428,10 @@ private let sampleSpaces: [SpaceViewModel] = [
         documentCount: 8,
         contributorCount: 2,
         updatedAt: Date().addingTimeInterval(-172800),
-        isStarred: false
+        isStarred: false,
+        channels: [
+            ChannelViewModel(name: "envoy-app", icon: "app", unreadCount: 1, threadCount: 3),
+            ChannelViewModel(name: "experiments", icon: "flask", unreadCount: 0, threadCount: 5)
+        ]
     )
 ]

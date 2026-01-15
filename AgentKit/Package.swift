@@ -93,7 +93,13 @@ let package = Package(
             dependencies: [
                 "AgentKit",
             ],
-            path: "Sources/Envoy"
+            path: "Sources/Envoy",
+            exclude: [
+                "Envoy.entitlements"  // Xcode-specific, not needed for SPM build
+            ],
+            resources: [
+                .process("Resources")
+            ]
         ),
 
         // MARK: - Tests

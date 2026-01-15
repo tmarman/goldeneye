@@ -1,26 +1,26 @@
 # Current Project State
 
-**Last Updated**: 2026-01-14
-**Phase**: Implementation → Demo Ready
+**Last Updated**: 2026-01-15
+**Phase**: User Acceptance → Polish
 
 ## Status Summary
 
-AgentKitConsole is now demo-ready with full UI implementation. Core features working:
-- A2A protocol integration with local server
-- Agent visualization and activity monitoring
-- Approval/Decision workflows
-- Document editor with block-based editing
-- OpenSpace capture with EventKit integration
+AgentKitConsole UI complete but requires polish based on user acceptance feedback. 40 feedback items captured in F003, prioritized into critical bugs, UX issues, design philosophy changes, and future features.
+
+**Blocking Issues**:
+- Threads not persisting/swapping with spaces (#2, #29)
+- Action items not wired up (#5)
+- Filter options cut off (#27)
 
 ## Active Work
 
 | Flight | Status | Description |
 |--------|--------|-------------|
-| **F001** | **Complete** | V1 Local Runtime (Mac Studio) |
-| **F002** | **Complete** | Console UI Development |
-| F003 | Complete | ACE Research |
-| F004 | Backlog | Claude SDK Port |
-| F005 | Backlog | Developer SDK |
+| **F001** | Complete | V1 Local Runtime (Mac Studio) |
+| **F002** | Complete | Console UI Development |
+| **F003** | **Active** | User Feedback & Polish (40 items) |
+| F004 | Backlog | About Me Space (Concierge) |
+| F005 | Backlog | Agent Providers (Claude Code, Codex) |
 | F006 | Backlog | Docs & Landing Page |
 
 ## V1 Implementation Complete

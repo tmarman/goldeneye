@@ -56,6 +56,18 @@ struct ContentView: View {
         .sheet(isPresented: $appState.showAgentBuilder) {
             AgentBuilderView()
         }
+        // New Space sheet
+        .sheet(isPresented: $appState.showNewSpaceSheet) {
+            NewSpaceSheet()
+        }
+        // Model Picker sheet (Cmd+M)
+        .sheet(isPresented: $appState.showModelPicker) {
+            QuickModelSetupSheet()
+        }
+        // Keyboard shortcut for model picker
+        .onReceive(NotificationCenter.default.publisher(for: .openModelPicker)) { _ in
+            appState.showModelPicker = true
+        }
     }
 }
 
@@ -63,8 +75,68 @@ struct ContentView: View {
 
 struct SidebarView: View {
     @EnvironmentObject private var appState: AppState
+    @Environment(ChatService.self) private var chatService
+    @Environment(ProviderConfigManager.self) private var providerManager
     @ObservedObject private var serverManager = ServerManager.shared
     @Binding var columnVisibility: NavigationSplitViewVisibility
+
+    private var displaySpaces: [SpaceViewModel] {
+        // Only show actual spaces - no sample data
+        appState.spaces
+    }
+
+    /// Recent agent conversations for DM-style display
+    /// Only shows agents that have actual conversations (user-created)
+    private var recentAgentChats: [AgentDMInfo] {
+        var chats: [AgentDMInfo] = []
+
+        // Only show conversations that exist (user-initiated chats)
+        for conversation in appState.workspace.conversations.prefix(10) {
+            guard let agentName = conversation.agentName else { continue }
+
+            // Find matching registered agent for color/icon, or use defaults
+            let agent = appState.registeredAgents.first { $0.name == agentName }
+
+            chats.append(AgentDMInfo(
+                id: conversation.id.rawValue,
+                name: agentName,
+                avatar: agent.map { iconFor($0.profile) } ?? "person.crop.circle.fill",
+                color: agent.map { colorFor($0.profile) } ?? .blue,
+                lastMessage: conversation.messages.last?.content,
+                unreadCount: 0
+            ))
+        }
+
+        return chats
+    }
+
+    private func iconFor(_ profile: AgentProfile) -> String {
+        switch profile {
+        case .concierge: return "person.crop.circle.badge.questionmark"
+        case .founder: return "lightbulb.fill"
+        case .coach: return "figure.mind.and.body"
+        case .integrator: return "gearshape.2.fill"
+        case .librarian: return "books.vertical.fill"
+        case .weaver: return "arrow.triangle.merge"
+        case .critic: return "eye.fill"
+        case .executor: return "bolt.fill"
+        case .guardian: return "shield.fill"
+        }
+    }
+
+    private func colorFor(_ profile: AgentProfile) -> Color {
+        switch profile {
+        case .concierge: return .blue
+        case .founder: return .purple
+        case .coach: return .orange
+        case .integrator: return .green
+        case .librarian: return .brown
+        case .weaver: return .pink
+        case .critic: return .red
+        case .executor: return .yellow
+        case .guardian: return .gray
+        }
+    }
 
     var body: some View {
         List(selection: $appState.selectedSidebarItem) {
@@ -74,96 +146,171 @@ struct SidebarView: View {
                     .font(.headline)
             }
 
+            // Spaces with expandable channels
             Section("Spaces") {
-                ForEach(SidebarItem.workspaceItems) { item in
-                    sidebarRow(for: item)
+                ForEach(displaySpaces) { space in
+                    SpaceSidebarRow(space: space)
+                }
+
+                // Add new space - with menu for options
+                HStack(spacing: 8) {
+                    Button(action: { appState.showNewSpaceSheet = true }) {
+                        Label("Add Space", systemImage: "plus.circle")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+
+                    Menu {
+                        Button(action: { appState.showNewSpaceSheet = true }) {
+                            Label("New Space", systemImage: "folder.badge.plus")
+                        }
+                        Button(action: { addExternalFolder() }) {
+                            Label("Add External Folder", systemImage: "folder.badge.gearshape")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .foregroundStyle(.tertiary)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .frame(width: 20)
                 }
             }
 
-            Section("Activity") {
-                ForEach(SidebarItem.activityItems) { item in
-                    if item == .approvals {
-                        sidebarRow(for: item)
-                            .badge(appState.pendingApprovals.count)
-                    } else if item == .decisions {
-                        sidebarRow(for: item)
-                            .badge(appState.pendingDecisionCount)
-                    } else {
-                        sidebarRow(for: item)
-                    }
+            // Direct Messages (Agent chats - Slack-like)
+            Section("Direct Messages") {
+                // Show recent agent conversations
+                ForEach(recentAgentChats.prefix(5)) { agent in
+                    AgentDMRow(agent: agent)
                 }
+
+                // "View all" link to Agents roster
+                Button(action: { appState.selectedSidebarItem = .agents }) {
+                    Label("View all agents", systemImage: "ellipsis.circle")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
 
-            Section("Infrastructure") {
-                ForEach(SidebarItem.infrastructureItems) { item in
-                    if item == .agents {
-                        sidebarRow(for: item)
-                            .badge(appState.connectedAgents.count + (appState.localAgent != nil ? 1 : 0))
-                    } else {
-                        sidebarRow(for: item)
-                    }
-                }
-            }
+            // Activity section
+            Section {
+                sidebarRow(for: .tasks)
 
-            // Starred section (if any)
-            if !appState.workspace.starredDocuments.isEmpty || !appState.workspace.starredConversations.isEmpty {
-                Section("Starred") {
-                    ForEach(appState.workspace.starredDocuments) { doc in
-                        Label(doc.title.isEmpty ? "Untitled" : doc.title, systemImage: "doc.text")
-                            .tag(SidebarItem.documents)
-                    }
-                    ForEach(appState.workspace.starredConversations) { conv in
-                        Label(conv.title, systemImage: "bubble.left")
-                            .tag(SidebarItem.conversations)
-                    }
+                // Reviews only shown when there are pending items
+                let pendingCount = appState.pendingApprovals.count + appState.pendingDecisionCount
+                if pendingCount > 0 {
+                    sidebarRow(for: .reviews)
+                        .badge(pendingCount)
                 }
             }
         }
         .listStyle(.sidebar)
         .toolbar(removing: .sidebarToggle) // Remove default toggle
         .safeAreaInset(edge: .top) {
-            // Compact header with title and actions
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Goldeneye")
-                        .font(.headline)
-                    Text("\(itemCount) items")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                HStack(spacing: 12) {
-                    ServerStatusButton()
-
-                    Menu {
-                        Button(action: { appState.showNewDocumentSheet = true }) {
-                            Label("New Document", systemImage: "doc.badge.plus")
-                        }
-                        Button(action: { appState.showNewConversationSheet = true }) {
-                            Label("New Conversation", systemImage: "bubble.left.and.bubble.right")
-                        }
-                        Button(action: { appState.showNewCoachingSheet = true }) {
-                            Label("New Coaching Session", systemImage: "figure.mind.and.body")
-                        }
-                        Divider()
-                        Button(action: { appState.showNewTaskSheet = true }) {
-                            Label("New Task", systemImage: "plus.circle")
-                        }
-                    } label: {
-                        Image(systemName: "square.and.pencil")
-                            .font(.title3)
+            VStack(spacing: 0) {
+                // Sidebar collapse button - aligned with traffic light buttons
+                // Traffic lights are at ~(7, 6) from top-left, we position below them
+                HStack {
+                    Button(action: toggleSidebar) {
+                        Image(systemName: "sidebar.left")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
+                    .buttonStyle(.plain)
+                    .help("Collapse Sidebar")
+
+                    Spacer()
                 }
+                .padding(.leading, 7) // Align with traffic light X position
+                .padding(.top, 4)
+                .padding(.bottom, 8)
+
+                // Main header with title and actions
+                HStack(spacing: 12) {
+                    // Stylized Envoy logo
+                    Image("EnvoyLogo")
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 36, height: 36)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text("Envoy")
+                                .font(.headline)
+
+                            // Demo mode indicator
+                            if DemoDataManager.shared.isDemoMode {
+                                Text("DEMO")
+                                    .font(.caption2.weight(.bold))
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.orange, in: Capsule())
+                                    .foregroundStyle(.white)
+                            }
+                        }
+                        Text("\(itemCount) items")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    HStack(spacing: 12) {
+                        ServerStatusButton()
+
+                        Menu {
+                            Button(action: { appState.showNewDocumentSheet = true }) {
+                                Label("New Document", systemImage: "doc.badge.plus")
+                            }
+                            Button(action: { appState.showNewConversationSheet = true }) {
+                                Label("New Conversation", systemImage: "bubble.left.and.bubble.right")
+                            }
+                            Button(action: { appState.showNewCoachingSheet = true }) {
+                                Label("New Coaching Session", systemImage: "figure.mind.and.body")
+                            }
+                            Divider()
+                            Button(action: { appState.showNewTaskSheet = true }) {
+                                Label("New Task", systemImage: "plus.circle")
+                            }
+                        } label: {
+                            Image(systemName: "square.and.pencil")
+                                .font(.title3)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .menuIndicator(.hidden)
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 10)
             }
-            .padding(.horizontal)
-            .padding(.vertical, 10)
         }
         .safeAreaInset(edge: .bottom) {
-            ServerStatusBar()
+            VStack(spacing: 8) {
+                // Model status bar
+                ModelStatusBar()
+
+                // Server status bar
+                HStack(spacing: 12) {
+                    ServerStatusBar()
+
+                    Spacer()
+
+                    Button(action: { appState.selectedSidebarItem = .settings }) {
+                        Image(systemName: "gearshape")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Settings")
+                }
+                .padding(.trailing, 12)
+            }
+        }
+        .onChange(of: appState.selectedSidebarItem) { _, newItem in
+            // Clear space selection when switching to non-space sidebar items
+            if newItem != .spaces {
+                appState.selectedSpaceId = nil
+            }
         }
     }
 
@@ -174,6 +321,712 @@ struct SidebarView: View {
     private func sidebarRow(for item: SidebarItem) -> some View {
         Label(item.label, systemImage: item.icon)
             .tag(item)
+    }
+
+    private func toggleSidebar() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            columnVisibility = .detailOnly
+        }
+    }
+
+    private func addExternalFolder() {
+        // Open folder picker and create a new space linked to that folder
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.title = "Select Folder for New Space"
+        panel.prompt = "Add Space"
+
+        if panel.runModal() == .OK, let url = panel.url {
+            // Create a new space linked to this folder
+            let folderName = url.lastPathComponent
+            let newSpace = SpaceViewModel(
+                id: UUID().uuidString,
+                name: folderName,
+                description: "External folder: \(url.path)",
+                icon: "folder",
+                color: .blue,
+                path: url,
+                channels: []
+            )
+            appState.spaces.append(newSpace)
+
+            // Select the new space
+            appState.selectedSpaceId = SpaceID(newSpace.id)
+        }
+    }
+}
+
+// MARK: - Space Sidebar Row (Expandable with Channels)
+
+struct SpaceSidebarRow: View {
+    let space: SpaceViewModel
+    @EnvironmentObject private var appState: AppState
+    @State private var showSettings = false
+    @State private var showInviteAgent = false
+    @State private var isHovered = false
+
+    private var isExpanded: Bool {
+        appState.expandedSpaceIds.contains(space.id)
+    }
+
+    private var isSelected: Bool {
+        appState.selectedSpaceId?.rawValue == space.id
+    }
+
+    private var totalUnread: Int {
+        space.channels.reduce(0) { $0 + $1.unreadCount }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Space row header
+            HStack(spacing: 8) {
+                // Expand/collapse chevron
+                Button(action: toggleExpanded) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16)
+                }
+                .buttonStyle(.plain)
+
+                // Space icon
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(space.color.gradient)
+                    .frame(width: 20, height: 20)
+                    .overlay {
+                        Image(systemName: space.icon)
+                            .font(.caption2)
+                            .foregroundStyle(.white)
+                    }
+
+                Text(space.name)
+                    .lineLimit(1)
+
+                Spacer()
+
+                // Settings menu (appears on hover)
+                if isHovered {
+                    Menu {
+                        Button(action: { showSettings = true }) {
+                            Label("Space Settings", systemImage: "gearshape")
+                        }
+                        Button(action: { /* TODO: Add channel */ }) {
+                            Label("Add Channel", systemImage: "plus.bubble")
+                        }
+                        Button(action: { showInviteAgent = true }) {
+                            Label("Invite Agent", systemImage: "person.badge.plus")
+                        }
+                        Divider()
+                        Button(action: { showInFinder() }) {
+                            Label("Show in Finder", systemImage: "folder")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 20, height: 20)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                }
+
+                // Unread badge
+                if totalUnread > 0 {
+                    Text("\(totalUnread)")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.accentColor.opacity(0.2), in: Capsule())
+                        .foregroundStyle(.primary)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                selectSpace()
+            }
+            .onHover { hovering in
+                isHovered = hovering
+            }
+
+            // Expanded channels
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 2) {
+                    if space.channels.isEmpty {
+                        Text("No channels")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .padding(.vertical, 4)
+                    } else {
+                        ForEach(space.channels) { channel in
+                            ChannelSidebarRow(channel: channel, spaceId: space.id)
+                        }
+                    }
+                }
+                .padding(.leading, 28)
+                .padding(.top, 4)
+            }
+        }
+        .padding(.vertical, 4)
+        .contextMenu {
+            Button(action: { showSettings = true }) {
+                Label("Space Settings", systemImage: "gearshape")
+            }
+            Button(action: { /* TODO: Add channel */ }) {
+                Label("Add Channel", systemImage: "plus.bubble")
+            }
+            Divider()
+            Button(action: { showInFinder() }) {
+                Label("Show in Finder", systemImage: "folder")
+            }
+        }
+        .sheet(isPresented: $showSettings) {
+            SpaceSettingsSheet(space: space)
+        }
+        .sheet(isPresented: $showInviteAgent) {
+            InviteAgentSheet(space: space)
+        }
+    }
+
+    private func showInFinder() {
+        guard let path = space.path?.path else { return }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
+    }
+
+    private func toggleExpanded() {
+        withAnimation(.easeInOut(duration: 0.15)) {
+            if isExpanded {
+                appState.expandedSpaceIds.remove(space.id)
+            } else {
+                appState.expandedSpaceIds.insert(space.id)
+            }
+        }
+    }
+
+    private func selectSpace() {
+        print("🎯 Selecting space: \(space.name) with id: \(space.id)")
+        appState.selectedSpaceId = SpaceID(space.id)
+        appState.selectedChannelId = nil
+        // Clear sidebar selection so DetailView shows SpaceDetailView
+        // The List selection doesn't apply to spaces - they're custom rows
+    }
+}
+
+// MARK: - Space Settings Sheet
+
+struct SpaceSettingsSheet: View {
+    let space: SpaceViewModel
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
+
+    @State private var spaceName: String = ""
+    @State private var selectedColor: Color = .blue
+    @State private var selectedIcon: String = "folder.fill"
+
+    private let colorOptions: [Color] = [
+        .blue, .purple, .pink, .red, .orange, .yellow, .green, .mint, .cyan, .indigo, .brown, .gray
+    ]
+
+    private let iconOptions = [
+        "folder.fill", "doc.fill", "book.fill", "briefcase.fill",
+        "house.fill", "building.2.fill", "person.2.fill", "gear",
+        "star.fill", "heart.fill", "flag.fill", "tag.fill"
+    ]
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Space Settings")
+                    .font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding()
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Name
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Name")
+                            .font(.subheadline.weight(.medium))
+                        TextField("Space name", text: $spaceName)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    // Color picker
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Color")
+                            .font(.subheadline.weight(.medium))
+
+                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(36)), count: 6), spacing: 8) {
+                            ForEach(colorOptions, id: \.self) { color in
+                                Circle()
+                                    .fill(color.gradient)
+                                    .frame(width: 32, height: 32)
+                                    .overlay {
+                                        if selectedColor == color {
+                                            Image(systemName: "checkmark")
+                                                .font(.caption.bold())
+                                                .foregroundStyle(.white)
+                                        }
+                                    }
+                                    .onTapGesture {
+                                        selectedColor = color
+                                    }
+                            }
+                        }
+                    }
+
+                    // Icon picker
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Icon")
+                            .font(.subheadline.weight(.medium))
+
+                        LazyVGrid(columns: Array(repeating: GridItem(.fixed(44)), count: 6), spacing: 8) {
+                            ForEach(iconOptions, id: \.self) { icon in
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(selectedIcon == icon ? selectedColor.opacity(0.2) : Color(.controlBackgroundColor))
+                                    .frame(width: 40, height: 40)
+                                    .overlay {
+                                        Image(systemName: icon)
+                                            .foregroundStyle(selectedIcon == icon ? selectedColor : .secondary)
+                                    }
+                                    .onTapGesture {
+                                        selectedIcon = icon
+                                    }
+                            }
+                        }
+                    }
+
+                    // Preview
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Preview")
+                            .font(.subheadline.weight(.medium))
+
+                        HStack(spacing: 8) {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(selectedColor.gradient)
+                                .frame(width: 24, height: 24)
+                                .overlay {
+                                    Image(systemName: selectedIcon)
+                                        .font(.caption)
+                                        .foregroundStyle(.white)
+                                }
+
+                            Text(spaceName.isEmpty ? space.name : spaceName)
+                                .font(.subheadline)
+                        }
+                        .padding(12)
+                        .background(Color(.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    }
+
+                    // Location (read-only)
+                    if let path = space.path {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Location")
+                                .font(.subheadline.weight(.medium))
+
+                            HStack {
+                                Text(path.path)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+
+                                Spacer()
+
+                                Button("Show in Finder") {
+                                    NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path.path)
+                                }
+                                .font(.caption)
+                            }
+                            .padding(12)
+                            .background(Color(.controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+                }
+                .padding()
+            }
+
+            Divider()
+
+            // Footer with save/cancel
+            HStack {
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button("Save Changes") {
+                    // TODO: Save space settings via SpaceManager
+                    dismiss()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(spaceName.isEmpty && selectedColor == space.color && selectedIcon == space.icon)
+            }
+            .padding()
+        }
+        .frame(width: 400, height: 550)
+        .onAppear {
+            spaceName = space.name
+            selectedColor = space.color
+            selectedIcon = space.icon
+        }
+    }
+}
+
+// MARK: - Invite Agent Sheet
+
+struct InviteAgentSheet: View {
+    let space: SpaceViewModel
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
+    @State private var searchText = ""
+
+    private var availableAgents: [RegisteredAgent] {
+        let agents = appState.registeredAgents
+        if searchText.isEmpty { return agents }
+        return agents.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Invite Agent to \(space.name)")
+                    .font(.headline)
+                Spacer()
+                Button("Cancel") { dismiss() }
+            }
+            .padding()
+
+            Divider()
+
+            // Search
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search agents...", text: $searchText)
+                    .textFieldStyle(.plain)
+            }
+            .padding(8)
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding()
+
+            // Agent list
+            if availableAgents.isEmpty {
+                Spacer()
+                VStack(spacing: 12) {
+                    Image(systemName: "person.3.fill")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+                    Text("No agents available")
+                        .font(.headline)
+                    Text("Create agents in the Agents section")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Go to Agents") {
+                        appState.selectedSidebarItem = .agents
+                        dismiss()
+                    }
+                    .buttonStyle(.bordered)
+                }
+                Spacer()
+            } else {
+                List(availableAgents) { agent in
+                    AgentInviteRow(agent: agent) {
+                        inviteAgent(agent)
+                    }
+                }
+            }
+        }
+        .frame(width: 420, height: 480)
+    }
+
+    private func inviteAgent(_ agent: RegisteredAgent) {
+        // Create a new DM conversation with this agent
+        var conversation = Conversation(
+            title: "Invite: \(agent.name) → \(space.name)",
+            messages: [
+                // Agent's introduction message
+                ConversationMessage(
+                    role: .assistant,
+                    content: """
+                    Hi! I'm \(agent.name), and I've been invited to join **\(space.name)**.
+
+                    Before I get started, I'd like to ask: would you like me to **review existing threads** in this space? This would help me understand the context and contribute more effectively.
+
+                    Please let me know:
+                    - **Yes** - Review past threads and provide insights
+                    - **No** - Start fresh with new conversations only
+                    """
+                )
+            ],
+            agentName: agent.name
+        )
+        conversation.spaceId = SpaceID(space.id)
+
+        // Add to workspace
+        appState.workspace.conversations.insert(conversation, at: 0)
+
+        // Create a decision card for the retroactive review
+        let decisionCard = DecisionCard(
+            title: "Allow \(agent.name) to review existing threads?",
+            description: """
+            \(agent.name) has been invited to \(space.name).
+
+            If approved, the agent will analyze existing threads to understand context and may provide insights or suggestions based on past conversations.
+            """,
+            status: .pending,
+            sourceType: .agentAction,
+            sourceId: conversation.id.rawValue,
+            requestedBy: agent.name
+        )
+
+        // Add to pending decisions
+        appState.decisionCards.append(decisionCard)
+
+        // Navigate to the conversation
+        appState.selectedAgentFilter = agent.name
+        appState.selectedConversationId = conversation.id
+        appState.selectedSidebarItem = .conversations
+
+        dismiss()
+    }
+}
+
+struct AgentInviteRow: View {
+    let agent: RegisteredAgent
+    let onInvite: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Agent avatar
+            Circle()
+                .fill(colorFor(agent.profile).gradient)
+                .frame(width: 40, height: 40)
+                .overlay {
+                    Image(systemName: iconFor(agent.profile))
+                        .font(.title3)
+                        .foregroundStyle(.white)
+                }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(agent.name)
+                    .font(.headline)
+                Text(agent.profile.rawValue.capitalized)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            Button(action: onInvite) {
+                Label("Invite", systemImage: "person.badge.plus")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func iconFor(_ profile: AgentProfile) -> String {
+        switch profile {
+        case .concierge: return "person.crop.circle.badge.questionmark"
+        case .founder: return "lightbulb.fill"
+        case .coach: return "figure.mind.and.body"
+        case .integrator: return "gearshape.2.fill"
+        case .librarian: return "books.vertical.fill"
+        case .weaver: return "arrow.triangle.merge"
+        case .critic: return "eye.fill"
+        case .executor: return "bolt.fill"
+        case .guardian: return "shield.fill"
+        }
+    }
+
+    private func colorFor(_ profile: AgentProfile) -> Color {
+        switch profile {
+        case .concierge: return .blue
+        case .founder: return .purple
+        case .coach: return .orange
+        case .integrator: return .green
+        case .librarian: return .brown
+        case .weaver: return .pink
+        case .critic: return .red
+        case .executor: return .yellow
+        case .guardian: return .gray
+        }
+    }
+}
+
+// MARK: - Channel Sidebar Row
+
+struct ChannelSidebarRow: View {
+    let channel: ChannelViewModel
+    let spaceId: String
+    @EnvironmentObject private var appState: AppState
+    @State private var showMembers = false
+
+    private var isSelected: Bool {
+        appState.selectedSpaceId?.rawValue == spaceId &&
+        appState.selectedChannelId == channel.id
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: channel.icon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 16)
+
+            Text(channel.name)
+                .font(.subheadline)
+                .lineLimit(1)
+
+            Spacer()
+
+            if channel.unreadCount > 0 {
+                Text("\(channel.unreadCount)")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.accentColor, in: Capsule())
+                    .foregroundStyle(.white)
+            }
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 4))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectChannel()
+        }
+        .contextMenu {
+            Button(action: { showMembers = true }) {
+                Label("View Members", systemImage: "person.2")
+            }
+            Button(action: { /* TODO */ }) {
+                Label("Add Member", systemImage: "person.badge.plus")
+            }
+            Divider()
+            Button(action: { /* TODO */ }) {
+                Label("Channel Settings", systemImage: "gearshape")
+            }
+            Button(action: { /* TODO */ }) {
+                Label("Mute Channel", systemImage: "bell.slash")
+            }
+        }
+        .sheet(isPresented: $showMembers) {
+            ChannelMembersSheet(channel: channel, spaceId: spaceId)
+        }
+    }
+
+    private func selectChannel() {
+        appState.selectedSpaceId = SpaceID(spaceId)
+        appState.selectedChannelId = channel.id
+        // Channel selection is separate from sidebar item selection
+    }
+}
+
+// MARK: - Channel Members Sheet
+
+struct ChannelMembersSheet: View {
+    let channel: ChannelViewModel
+    let spaceId: String
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Channel Members")
+                        .font(.headline)
+                    Text("#\(channel.name)")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding()
+
+            Divider()
+
+            // Members list
+            if appState.registeredAgents.isEmpty {
+                ContentUnavailableView(
+                    "No Members Yet",
+                    systemImage: "person.2.slash",
+                    description: Text("Invite agents to this channel to collaborate")
+                )
+            } else {
+                List {
+                    Section("Agents") {
+                        ForEach(appState.registeredAgents.prefix(5)) { agent in
+                            HStack(spacing: 12) {
+                                Circle()
+                                    .fill(Color.blue.opacity(0.2))
+                                    .frame(width: 32, height: 32)
+                                    .overlay {
+                                        Image(systemName: "sparkles")
+                                            .font(.caption)
+                                            .foregroundStyle(.blue)
+                                    }
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(agent.name)
+                                        .font(.subheadline.weight(.medium))
+                                    Text(agent.profile.rawValue.capitalized)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer()
+
+                                Menu {
+                                    Button(action: {}) {
+                                        Label("Message", systemImage: "bubble.left")
+                                    }
+                                    Button(action: {}) {
+                                        Label("Remove from Channel", systemImage: "minus.circle")
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis")
+                                        .foregroundStyle(.secondary)
+                                }
+                                .menuStyle(.borderlessButton)
+                                .menuIndicator(.hidden)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            // Add member button
+            HStack {
+                Button {
+                    // TODO: Show agent picker
+                } label: {
+                    Label("Invite Agent", systemImage: "person.badge.plus")
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+            }
+            .padding()
+        }
+        .frame(width: 400, height: 450)
     }
 }
 
@@ -308,6 +1161,335 @@ struct ServerStatusBar: View {
     }
 }
 
+// MARK: - Model Status Bar
+
+/// Compact bar showing current model status with quick access to model selection
+struct ModelStatusBar: View {
+    @Environment(ChatService.self) private var chatService
+    @Environment(ProviderConfigManager.self) private var providerManager
+    @State private var showPopover = false
+    @State private var animatePulse = false
+
+    private var statusIcon: String {
+        if chatService.isLoadingModel {
+            return "sparkles"
+        } else if chatService.isReady {
+            return "checkmark.circle.fill"
+        } else {
+            return "sparkles"
+        }
+    }
+
+    private var statusColor: Color {
+        if chatService.isLoadingModel {
+            return .orange
+        } else if chatService.isReady {
+            return .green
+        } else {
+            return .secondary
+        }
+    }
+
+    private var statusText: String {
+        if chatService.isLoadingModel {
+            let progress = Int(chatService.loadProgress * 100)
+            return "Loading \(progress)%"
+        } else if chatService.isReady {
+            return shortModelName(chatService.loadedModelId ?? chatService.providerDescription)
+        } else {
+            return "Select a model"
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Loading progress bar
+            if chatService.isLoadingModel {
+                GeometryReader { geometry in
+                    Rectangle()
+                        .fill(Color.orange.gradient)
+                        .frame(width: geometry.size.width * chatService.loadProgress)
+                }
+                .frame(height: 2)
+                .animation(.linear(duration: 0.2), value: chatService.loadProgress)
+            }
+
+            // Main button
+            Button(action: { showPopover.toggle() }) {
+                HStack(spacing: 8) {
+                    // Status indicator with icon
+                    HStack(spacing: 6) {
+                        ZStack {
+                            if chatService.isLoadingModel {
+                                // Animated loading indicator
+                                Circle()
+                                    .stroke(Color.orange.opacity(0.3), lineWidth: 2)
+                                    .frame(width: 14, height: 14)
+
+                                Circle()
+                                    .trim(from: 0, to: chatService.loadProgress)
+                                    .stroke(Color.orange, lineWidth: 2)
+                                    .frame(width: 14, height: 14)
+                                    .rotationEffect(.degrees(-90))
+                            } else {
+                                Image(systemName: statusIcon)
+                                    .font(.caption)
+                                    .foregroundStyle(statusColor)
+                            }
+                        }
+                        .frame(width: 14, height: 14)
+
+                        Text(statusText)
+                            .font(.caption.weight(chatService.isReady ? .medium : .regular))
+                            .foregroundStyle(chatService.isReady ? .primary : .secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    // Keyboard shortcut hint
+                    if !chatService.isReady {
+                        Text("⌘M")
+                            .font(.caption2.monospaced())
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 3))
+                    }
+
+                    // Chevron for popover
+                    Image(systemName: "chevron.up")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(showPopover ? 180 : 0))
+                        .animation(.easeInOut(duration: 0.2), value: showPopover)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(backgroundColor)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(borderColor, lineWidth: 1)
+                )
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+        .popover(isPresented: $showPopover, arrowEdge: .top) {
+            ModelQuickSwitcher()
+                .environment(chatService)
+                .environment(providerManager)
+        }
+    }
+
+    private var backgroundColor: Color {
+        if chatService.isLoadingModel {
+            return Color.orange.opacity(0.1)
+        } else if chatService.isReady {
+            return Color.green.opacity(0.1)
+        } else {
+            return Color(.controlBackgroundColor)
+        }
+    }
+
+    private var borderColor: Color {
+        if chatService.isLoadingModel {
+            return Color.orange.opacity(0.2)
+        } else if chatService.isReady {
+            return Color.green.opacity(0.2)
+        } else {
+            return Color.clear
+        }
+    }
+
+    private func shortModelName(_ name: String) -> String {
+        let shortName = name.components(separatedBy: "/").last ?? name
+        if shortName.count > 25 {
+            return String(shortName.prefix(22)) + "..."
+        }
+        return shortName
+    }
+}
+
+// MARK: - Model Quick Switcher Popover
+
+struct ModelQuickSwitcher: View {
+    @Environment(ChatService.self) private var chatService
+    @Environment(ProviderConfigManager.self) private var providerManager
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @State private var isLoading = false
+    @State private var selectedModelId: String?
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            HStack {
+                Image(systemName: "sparkles")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Model")
+                        .font(.headline)
+
+                    if chatService.isReady {
+                        Text(chatService.providerDescription)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Select a model to enable AI chat")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Spacer()
+            }
+
+            Divider()
+
+            // Quick model options
+            ScrollView {
+                VStack(spacing: 4) {
+                    // MLX quick picks
+                    quickPickSection(
+                        title: "On-Device (MLX)",
+                        icon: "apple.logo",
+                        models: [
+                            ("mlx-community/Llama-3.2-1B-Instruct-4bit", "Llama 3.2 1B", "Fast, lightweight"),
+                            ("mlx-community/Llama-3.2-3B-Instruct-4bit", "Llama 3.2 3B", "Good balance"),
+                            ("mlx-community/Qwen2.5-7B-Instruct-4bit", "Qwen 2.5 7B", "Recommended"),
+                        ]
+                    )
+
+                    // Ollama if configured
+                    if let ollama = providerManager.providers.first(where: { $0.type == .ollama && $0.isEnabled }) {
+                        quickPickSection(
+                            title: "Ollama",
+                            icon: "server.rack",
+                            models: ollama.availableModels.prefix(3).map { ($0, $0, "") }
+                        )
+                    }
+                }
+            }
+            .frame(maxHeight: 300)
+
+            // Error
+            if let error = error {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                    Text(error)
+                        .font(.caption)
+                }
+                .padding(8)
+                .background(.red.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+            }
+
+            Divider()
+
+            // Footer actions
+            HStack {
+                Button("More Models") {
+                    appState.targetSettingsCategory = "models"
+                    appState.selectedSidebarItem = .settings
+                    dismiss()
+                }
+                .font(.caption)
+
+                Spacer()
+
+                if isLoading {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                }
+            }
+        }
+        .padding()
+        .frame(width: 300)
+    }
+
+    @ViewBuilder
+    private func quickPickSection(title: String, icon: String, models: [(String, String, String)]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption)
+                Text(title)
+                    .font(.caption.weight(.semibold))
+            }
+            .foregroundStyle(.secondary)
+
+            ForEach(models, id: \.0) { modelId, displayName, subtitle in
+                Button(action: { selectModel(modelId) }) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(displayName)
+                                .font(.subheadline)
+                            if !subtitle.isEmpty {
+                                Text(subtitle)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                        }
+
+                        Spacer()
+
+                        if chatService.loadedModelId == modelId {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else if isLoading && selectedModelId == modelId {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        chatService.loadedModelId == modelId
+                            ? Color.green.opacity(0.1)
+                            : Color(.controlBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+                }
+                .buttonStyle(.plain)
+                .disabled(isLoading)
+            }
+        }
+    }
+
+    private func selectModel(_ modelId: String) {
+        isLoading = true
+        selectedModelId = modelId
+        error = nil
+
+        Task {
+            do {
+                // Determine provider type from model ID
+                if modelId.hasPrefix("mlx-community/") || modelId.contains("Instruct-") {
+                    try await chatService.loadMLXModel(modelId)
+                } else {
+                    // Assume Ollama for other models
+                    if let ollama = providerManager.providers.first(where: { $0.type == .ollama && $0.isEnabled }) {
+                        var config = ollama
+                        config.selectedModel = modelId
+                        try await chatService.selectProvider(config)
+                    }
+                }
+                dismiss()
+            } catch {
+                self.error = error.localizedDescription
+            }
+            isLoading = false
+        }
+    }
+}
+
 // MARK: - Server Status Popover
 
 struct ServerStatusPopover: View {
@@ -379,7 +1561,7 @@ struct ServerStatusPopover: View {
                         .foregroundStyle(.secondary)
 
                     HStack {
-                        Image(systemName: "cpu")
+                        Image(systemName: "sparkles")
                             .foregroundStyle(.secondary)
                         Text(serverManager.selectedModel)
                             .font(.system(.body, design: .monospaced))
@@ -504,11 +1686,22 @@ struct DetailView: View {
         Group {
             // Check if a specific space is selected
             if let spaceId = appState.selectedSpaceId {
-                SpaceDetailView(spaceId: spaceId)
+                // Special handling for About Me space
+                if spaceId == AboutMeService.aboutMeSpaceId {
+                    AboutMeView()
+                        .onAppear {
+                            print("📱 Showing AboutMeView")
+                        }
+                } else {
+                    SpaceDetailView(spaceId: spaceId)
+                        .onAppear {
+                            print("📱 Showing SpaceDetailView for: \(spaceId)")
+                        }
+                }
             } else {
                 // Regular sidebar navigation
                 switch appState.selectedSidebarItem {
-                case .openSpace:
+                case .headspace:
                     OpenSpaceView()
                 case .spaces:
                     SpacesListView()
@@ -518,10 +1711,8 @@ struct DetailView: View {
                     ConversationsView()
                 case .tasks:
                     TasksView()
-                case .decisions:
-                    DecisionCardsView()
-                case .approvals:
-                    ApprovalsView()
+                case .reviews:
+                    ReviewsView()
                 case .agents:
                     AgentsView()
                 case .connections:
@@ -532,25 +1723,24 @@ struct DetailView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button(action: toggleSidebar) {
-                    Image(systemName: "sidebar.left")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
+            // Only show toolbar toggle when sidebar is collapsed
+            if columnVisibility == .detailOnly {
+                ToolbarItem(placement: .navigation) {
+                    Button(action: expandSidebar) {
+                        Image(systemName: "sidebar.left")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Show Sidebar")
                 }
-                .buttonStyle(.plain)
-                .help("Toggle Sidebar")
             }
         }
     }
 
-    private func toggleSidebar() {
+    private func expandSidebar() {
         withAnimation(.easeInOut(duration: 0.25)) {
-            if columnVisibility == .all {
-                columnVisibility = .detailOnly
-            } else {
-                columnVisibility = .all
-            }
+            columnVisibility = .all
         }
     }
 }
@@ -737,6 +1927,93 @@ struct ConnectAgentSheet: View {
 
         appState.connectedAgents.append(agent)
         dismiss()
+    }
+}
+
+// MARK: - Agent DM Model
+
+struct AgentDMInfo: Identifiable {
+    let id: String
+    let name: String
+    let avatar: String
+    let color: Color
+    let lastMessage: String?
+    let unreadCount: Int
+}
+
+// MARK: - Agent DM Row (Slack-style, simplified)
+
+struct AgentDMRow: View {
+    let agent: AgentDMInfo
+    @EnvironmentObject private var appState: AppState
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            // Simple avatar (no status dot)
+            Circle()
+                .fill(agent.color.gradient)
+                .frame(width: 28, height: 28)
+                .overlay {
+                    Image(systemName: agent.avatar)
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(agent.name)
+                    .font(.subheadline)
+                    .lineLimit(1)
+
+                if let lastMessage = agent.lastMessage {
+                    Text(lastMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            // Unread badge only (no timer)
+            if agent.unreadCount > 0 {
+                Text("\(agent.unreadCount)")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.red, in: Capsule())
+                    .foregroundStyle(.white)
+            }
+        }
+        .padding(.vertical, 4)
+        .padding(.horizontal, 6)
+        .background(isHovered ? Color.gray.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        .onHover { isHovered = $0 }
+        .onTapGesture {
+            // Navigate to agent conversation
+            startAgentChat()
+        }
+    }
+
+    private func startAgentChat() {
+        // Set agent filter to show all threads with this agent
+        appState.selectedAgentFilter = agent.name
+        appState.selectedSidebarItem = .conversations
+
+        // If there's an existing conversation with this agent, select it
+        if let conv = appState.workspace.conversations.first(where: { $0.agentName == agent.name }) {
+            appState.selectedConversationId = conv.id
+        } else {
+            // Create new conversation and select it
+            let newConv = Conversation(
+                title: "Chat with \(agent.name)",
+                messages: [],
+                agentName: agent.name
+            )
+            appState.workspace.conversations.insert(newConv, at: 0)
+            appState.selectedConversationId = newConv.id
+            appState.selectedSidebarItem = .conversations
+        }
     }
 }
 

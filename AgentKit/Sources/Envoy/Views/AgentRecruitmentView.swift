@@ -72,7 +72,6 @@ struct AgentRecruitmentView: View {
             Section("Categories") {
                 ForEach(AgentCategory.allCases, id: \.self) { category in
                     Label(category.rawValue, systemImage: category.icon)
-                        .foregroundStyle(category.color)
                         .tag(category as AgentCategory?)
                 }
             }
@@ -174,10 +173,10 @@ struct AgentTemplateCard: View {
         VStack(alignment: .leading, spacing: 0) {
             // Header with avatar
             HStack(spacing: 12) {
-                // Avatar
+                // Avatar - muted gray with subtle accent
                 ZStack {
                     Circle()
-                        .fill(template.accentColor.gradient)
+                        .fill(Color.primary.opacity(0.08))
                         .frame(width: 56, height: 56)
 
                     Text(template.personality.emoji)
@@ -195,14 +194,14 @@ struct AgentTemplateCard: View {
 
                 Spacer()
 
-                // Category badge
+                // Category badge - subtle gray
                 Text(template.category.rawValue)
                     .font(.caption2)
                     .fontWeight(.medium)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(template.category.color.opacity(0.15))
-                    .foregroundStyle(template.category.color)
+                    .background(Color.primary.opacity(0.06))
+                    .foregroundStyle(.secondary)
                     .clipShape(Capsule())
             }
             .padding()
@@ -253,20 +252,19 @@ struct AgentTemplateCard: View {
                     Label("Recruit", systemImage: "person.badge.plus")
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(template.accentColor)
             }
             .padding()
         }
         .background {
             RoundedRectangle(cornerRadius: 16)
-                .fill(.ultraThinMaterial)
+                .fill(.background)
         }
         .overlay(
             RoundedRectangle(cornerRadius: 16)
-                .stroke(isHovered ? template.accentColor.opacity(0.4) : Color.white.opacity(0.1), lineWidth: 1)
+                .stroke(Color.primary.opacity(isHovered ? 0.15 : 0.08), lineWidth: 1)
         )
-        .shadow(color: .black.opacity(isHovered ? 0.15 : 0.08), radius: isHovered ? 12 : 6, y: isHovered ? 4 : 2)
-        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .shadow(color: .black.opacity(isHovered ? 0.12 : 0.06), radius: isHovered ? 8 : 4, y: isHovered ? 3 : 1)
+        .scaleEffect(isHovered ? 1.01 : 1.0)
         .animation(.spring(response: 0.25, dampingFraction: 0.7), value: isHovered)
         .onHover { hovering in isHovered = hovering }
         .sheet(isPresented: $showingDetail) {
@@ -287,16 +285,15 @@ struct AgentTemplateDetailView: View {
             VStack(alignment: .leading, spacing: 24) {
                 // Hero section
                 HStack(spacing: 20) {
-                    // Large avatar
+                    // Large avatar - muted style
                     ZStack {
                         Circle()
-                            .fill(template.accentColor.gradient)
+                            .fill(Color.primary.opacity(0.08))
                             .frame(width: 100, height: 100)
 
                         Text(template.personality.emoji)
                             .font(.system(size: 48))
                     }
-                    .shadow(color: template.accentColor.opacity(0.4), radius: 20)
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text(template.name)
@@ -312,15 +309,16 @@ struct AgentTemplateDetailView: View {
                                 .font(.caption)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
-                                .background(template.category.color.opacity(0.15))
-                                .foregroundStyle(template.category.color)
+                                .background(Color.primary.opacity(0.06))
+                                .foregroundStyle(.secondary)
                                 .clipShape(Capsule())
 
                             Label(template.personality.communicationStyle.rawValue, systemImage: "bubble.left")
                                 .font(.caption)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
-                                .background(Color.primary.opacity(0.05))
+                                .background(Color.primary.opacity(0.06))
+                                .foregroundStyle(.secondary)
                                 .clipShape(Capsule())
                         }
                     }
@@ -361,7 +359,7 @@ struct AgentTemplateDetailView: View {
                         ForEach(template.skills, id: \.self) { skill in
                             HStack {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(template.accentColor)
+                                    .foregroundStyle(.tertiary)
                                 Text(skill)
                             }
                             .font(.subheadline)
@@ -423,7 +421,6 @@ struct AgentTemplateDetailView: View {
                     Label("Recruit \(template.name)", systemImage: "person.badge.plus")
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(template.accentColor)
             }
             .padding()
             .background(.ultraThinMaterial)
@@ -460,7 +457,7 @@ struct RecruitAgentSheet: View {
             HStack(spacing: 16) {
                 ZStack {
                     Circle()
-                        .fill(template.accentColor.gradient)
+                        .fill(Color.primary.opacity(0.08))
                         .frame(width: 64, height: 64)
 
                     Text(template.personality.emoji)
@@ -528,7 +525,7 @@ struct RecruitAgentSheet: View {
                 ForEach(template.skills.prefix(3), id: \.self) { skill in
                     HStack(spacing: 8) {
                         Image(systemName: "checkmark.circle.fill")
-                            .foregroundStyle(template.accentColor)
+                            .foregroundStyle(.tertiary)
                         Text(skill)
                     }
                     .font(.subheadline)
@@ -536,7 +533,7 @@ struct RecruitAgentSheet: View {
             }
             .padding()
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(template.accentColor.opacity(0.08))
+            .background(Color.primary.opacity(0.04))
             .clipShape(RoundedRectangle(cornerRadius: 12))
 
             // Actions
@@ -555,7 +552,6 @@ struct RecruitAgentSheet: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .tint(template.accentColor)
                 .disabled(customName.isEmpty || isRecruiting)
             }
         }

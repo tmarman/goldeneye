@@ -98,6 +98,13 @@ struct DashboardView: View {
                         }
                     }
                 }
+
+                // Model usage analytics
+                if !appState.workspace.conversations.isEmpty {
+                    DashboardSection(title: "Model Usage", icon: "chart.pie") {
+                        ModelUsageAnalyticsView(conversations: appState.workspace.conversations)
+                    }
+                }
             }
             .padding()
         }
@@ -1010,7 +1017,7 @@ struct GettingStartedCard: View {
                     ))
 
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("Welcome to Goldeneye")
+                    Text("Welcome to Envoy")
                         .font(.title2)
                         .fontWeight(.semibold)
 
@@ -1149,5 +1156,259 @@ struct StepRow: View {
 
             Spacer()
         }
+    }
+}
+
+// MARK: - Model Usage Analytics View
+
+struct ModelUsageAnalyticsView: View {
+    let conversations: [Conversation]
+
+    // Computed analytics
+    private var modelUsage: [ModelUsageData] {
+        var usage: [String: ModelUsageData] = [:]
+
+        for conversation in conversations {
+            guard let modelId = conversation.modelId else { continue }
+            let shortName = modelId.components(separatedBy: "/").last ?? modelId
+
+            let tokens = conversation.messages.compactMap { $0.metadata?.tokens }.reduce(0, +)
+            let messageCount = conversation.messages.filter { $0.role == .assistant }.count
+
+            if var existing = usage[shortName] {
+                existing.conversations += 1
+                existing.tokens += tokens
+                existing.messages += messageCount
+                usage[shortName] = existing
+            } else {
+                usage[shortName] = ModelUsageData(
+                    modelName: shortName,
+                    conversations: 1,
+                    tokens: tokens,
+                    messages: messageCount
+                )
+            }
+        }
+
+        return Array(usage.values).sorted { $0.tokens > $1.tokens }
+    }
+
+    private var totalTokens: Int {
+        modelUsage.reduce(0) { $0 + $1.tokens }
+    }
+
+    private var totalConversations: Int {
+        conversations.count
+    }
+
+    private var totalMessages: Int {
+        conversations.reduce(0) { $0 + $1.messages.count }
+    }
+
+    var body: some View {
+        VStack(spacing: 16) {
+            // Summary stats
+            HStack(spacing: 20) {
+                AnalyticsSummaryCard(
+                    icon: "bubble.left.and.bubble.right",
+                    value: "\(totalConversations)",
+                    label: "Conversations",
+                    color: .blue
+                )
+                AnalyticsSummaryCard(
+                    icon: "text.bubble",
+                    value: "\(totalMessages)",
+                    label: "Messages",
+                    color: .green
+                )
+                AnalyticsSummaryCard(
+                    icon: "number",
+                    value: formatTokens(totalTokens),
+                    label: "Tokens",
+                    color: .purple
+                )
+                AnalyticsSummaryCard(
+                    icon: "cpu",
+                    value: "\(modelUsage.count)",
+                    label: "Models",
+                    color: .orange
+                )
+            }
+
+            // Model breakdown
+            if !modelUsage.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Usage by Model")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+
+                    ForEach(modelUsage, id: \.modelName) { data in
+                        ModelUsageRow(data: data, totalTokens: totalTokens)
+                    }
+                }
+            } else {
+                Text("No model usage data yet")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+            }
+        }
+    }
+
+    private func formatTokens(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        } else if count >= 1000 {
+            return String(format: "%.1fK", Double(count) / 1000)
+        }
+        return "\(count)"
+    }
+}
+
+// MARK: - Model Usage Data
+
+private struct ModelUsageData {
+    let modelName: String
+    var conversations: Int
+    var tokens: Int
+    var messages: Int
+}
+
+// MARK: - Analytics Summary Card
+
+private struct AnalyticsSummaryCard: View {
+    let icon: String
+    let value: String
+    let label: String
+    let color: Color
+
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption)
+                    .foregroundStyle(color)
+                Text(value)
+                    .font(.title3.monospacedDigit().weight(.semibold))
+            }
+            Text(label)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(color.opacity(isHovered ? 0.12 : 0.08))
+        )
+        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .animation(.spring(response: 0.2, dampingFraction: 0.7), value: isHovered)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+}
+
+// MARK: - Model Usage Row
+
+private struct ModelUsageRow: View {
+    let data: ModelUsageData
+    let totalTokens: Int
+
+    @State private var isHovered = false
+    @State private var animateBar = false
+
+    private var percentage: Double {
+        guard totalTokens > 0 else { return 0 }
+        return Double(data.tokens) / Double(totalTokens)
+    }
+
+    private var color: Color {
+        // Cycle through colors based on hash
+        let colors: [Color] = [.blue, .green, .orange, .purple, .pink, .cyan]
+        let index = abs(data.modelName.hashValue) % colors.count
+        return colors[index]
+    }
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack {
+                // Model name with icon
+                HStack(spacing: 6) {
+                    Image(systemName: "cpu")
+                        .font(.caption2)
+                        .foregroundStyle(color)
+                    Text(data.modelName)
+                        .font(.caption.weight(.medium))
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                // Stats
+                HStack(spacing: 12) {
+                    HStack(spacing: 4) {
+                        Text("\(data.conversations)")
+                            .font(.caption.monospacedDigit())
+                        Text("chats")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    HStack(spacing: 4) {
+                        Text(formatTokens(data.tokens))
+                            .font(.caption.monospacedDigit().weight(.medium))
+                        Text("tokens")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    Text("\(Int(percentage * 100))%")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 35, alignment: .trailing)
+                }
+            }
+
+            // Usage bar
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    // Background
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(Color.secondary.opacity(0.1))
+
+                    // Filled portion
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(color.gradient)
+                        .frame(width: animateBar ? geometry.size.width * percentage : 0)
+                }
+            }
+            .frame(height: 6)
+        }
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isHovered ? Color(.controlBackgroundColor) : Color.clear)
+        )
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovered = hovering
+            }
+        }
+        .onAppear {
+            withAnimation(.easeOut(duration: 0.8).delay(0.1)) {
+                animateBar = true
+            }
+        }
+    }
+
+    private func formatTokens(_ count: Int) -> String {
+        if count >= 1000 {
+            return String(format: "%.1fK", Double(count) / 1000)
+        }
+        return "\(count)"
     }
 }

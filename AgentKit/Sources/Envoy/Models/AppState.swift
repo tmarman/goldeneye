@@ -14,7 +14,7 @@ public final class AppState: ObservableObject {
     static let shared = AppState()
     // MARK: - Navigation
 
-    @Published var selectedSidebarItem: SidebarItem = .openSpace
+    @Published var selectedSidebarItem: SidebarItem = .headspace
     @Published var showNewTaskSheet = false
     @Published var showConnectSheet = false
     @Published var showNewDocumentSheet = false
@@ -24,6 +24,10 @@ public final class AppState: ObservableObject {
     @Published var showCommandPalette = false
     @Published var showAgentRecruitment = false
     @Published var showAgentBuilder = false
+    @Published var showModelPicker = false
+
+    /// Target settings category to navigate to (reset after navigation)
+    @Published var targetSettingsCategory: String?
 
     // MARK: - Space Management
 
@@ -45,6 +49,12 @@ public final class AppState: ObservableObject {
     /// MCP connection manager - handles connections to MCP servers
     let mcpManager: MCPManager
 
+    /// Native integrations (Slack, Quip, etc.)
+    let nativeIntegrations: NativeIntegrationManager
+
+    /// Conversation persistence store
+    let conversationStore: ConversationStore?
+
     /// Memory store - RAG-based retrieval across all content
     var memoryStore: MemoryStore?
 
@@ -53,11 +63,20 @@ public final class AppState: ObservableObject {
     var contentSyncService: ContentSyncService?
     #endif
 
+    /// About Me service - manages the special personal profile space
+    let aboutMeService = AboutMeService()
+
     /// Current spaces loaded from SpaceManager (for UI binding)
     @Published var spaces: [SpaceViewModel] = []
 
     /// Selected space for detail view
     @Published var selectedSpaceId: SpaceID?
+
+    /// Selected channel within a space
+    @Published var selectedChannelId: String?
+
+    /// Expanded spaces in sidebar (tracks which spaces show channels)
+    @Published var expandedSpaceIds: Set<String> = []
 
     // MARK: - Open Space
 
@@ -86,6 +105,10 @@ public final class AppState: ObservableObject {
     @Published var selectedConversationId: ConversationID?
     @Published var selectedCoachingSessionId: CoachingSessionID?
 
+    /// Selected agent filter for DM-style thread filtering
+    /// When set, conversations view shows only threads with this agent
+    @Published var selectedAgentFilter: String?
+
     // MARK: - Agent Panel
 
     @Published var isAgentPanelVisible = false
@@ -110,6 +133,19 @@ public final class AppState: ObservableObject {
 
     /// Whether the agent client is available for requests
     var hasAgentClient: Bool { a2aClient != nil }
+
+    /// Check A2A client health
+    func checkA2AHealth() async -> (isHealthy: Bool, error: String?) {
+        guard let client = a2aClient else {
+            return (false, "No A2A client configured")
+        }
+        do {
+            let healthy = try await client.healthCheck()
+            return (healthy, healthy ? nil : "Server not responding")
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
 
     /// Send a message to the agent and collect the full response
     func sendAgentMessage(_ prompt: String) async -> String? {
@@ -175,6 +211,15 @@ public final class AppState: ObservableObject {
         // Initialize MCP Manager
         self.mcpManager = MCPManager()
 
+        // Initialize Native Integrations
+        self.nativeIntegrations = NativeIntegrationManager()
+
+        // Initialize Conversation Store (must happen before any self methods)
+        self.conversationStore = try? ConversationStore()
+        if conversationStore == nil {
+            print("⚠️ Failed to initialize ConversationStore")
+        }
+
         // Initialize local agent using settings
         updateLocalAgentFromSettings()
 
@@ -202,6 +247,11 @@ public final class AppState: ObservableObject {
 
             await loadSpaces()
             await loadDocuments()
+            await loadConversations()
+            await loadRegisteredAgents()
+
+            // Initialize the About Me space (creates if needed)
+            await aboutMeService.initializeIfNeeded(appState: self)
 
             // Auto-connect if enabled
             if UserDefaults.standard.bool(forKey: "autoConnectLocal") {
@@ -211,9 +261,6 @@ public final class AppState: ObservableObject {
             // Start background sync for Reading List and Shared with You
             await startContentSync()
         }
-
-        // Keep sample conversation for development
-        setupSampleConversation()
 
         // Observe settings changes
         setupSettingsObservers()
@@ -278,17 +325,23 @@ public final class AppState: ObservableObject {
         #endif
     }
 
-    private func setupSampleConversation() {
-        // Sample conversation for development
-        let sampleConversation = Conversation(
-            title: "Getting started chat",
-            messages: [
-                ConversationMessage(role: .user, content: "Hello! What can you help me with?"),
-                ConversationMessage(role: .assistant, content: "I can help you with a wide range of tasks! I can assist with writing, research, coding, analysis, and creative projects. I can also coach you on career development, fitness, and more. What would you like to explore?")
-            ],
-            agentName: "Primary Agent"
-        )
-        workspace.conversations.append(sampleConversation)
+    // MARK: - Native Integrations
+
+    /// Configure Slack integration with a bot token
+    public func configureSlack(token: String) async {
+        await nativeIntegrations.configureSlack(token: token)
+        print("✅ Slack integration \(token.isEmpty ? "disabled" : "configured")")
+    }
+
+    /// Configure Quip integration with an access token
+    public func configureQuip(token: String) async {
+        await nativeIntegrations.configureQuip(token: token)
+        print("✅ Quip integration \(token.isEmpty ? "disabled" : "configured")")
+    }
+
+    /// Get all available tools from native integrations
+    public func getNativeTools() async -> [any Tool] {
+        await nativeIntegrations.toolWrappers()
     }
 
     // MARK: - Space Operations
@@ -548,6 +601,9 @@ public final class AppState: ObservableObject {
                         )
                         self.workspace.conversations[conversationIndex].messages.append(assistantMessage)
                         self.workspace.conversations[conversationIndex].updatedAt = Date()
+
+                        // Persist the updated conversation
+                        await self.saveConversation(self.workspace.conversations[conversationIndex])
                     }
 
                     continuation.finish()
@@ -606,6 +662,9 @@ public final class AppState: ObservableObject {
             workspace.conversations[index].messages.append(assistantMessage)
             workspace.conversations[index].updatedAt = Date()
 
+            // Persist the updated conversation
+            await saveConversation(workspace.conversations[index])
+
             return response
         }
 
@@ -631,9 +690,9 @@ public final class AppState: ObservableObject {
             // If no documents exist, create the welcome document
             if workspace.documents.isEmpty {
                 let welcomeDoc = Document(
-                    title: "Welcome to Goldeneye",
+                    title: "Welcome to Envoy",
                     blocks: [
-                        .heading(HeadingBlock(content: "Welcome to Goldeneye", level: .h1)),
+                        .heading(HeadingBlock(content: "Welcome to Envoy", level: .h1)),
                         .text(TextBlock(content: "This is your personal knowledge workspace with AI agent integration.")),
                         .text(TextBlock(content: "Create documents, have conversations with agents, and track your coaching sessions—all in one place.")),
                         .heading(HeadingBlock(content: "Getting Started", level: .h2)),
@@ -709,6 +768,79 @@ public final class AppState: ObservableObject {
             try await saveDocument(workspace.documents[index])
         } catch {
             print("Failed to save document star status: \(error)")
+        }
+    }
+
+    // MARK: - Conversation Storage
+
+    /// Load conversations from persistent storage
+    func loadConversations() async {
+        guard let store = conversationStore else {
+            print("⚠️ ConversationStore not available")
+            return
+        }
+
+        do {
+            let conversations = try await store.loadAll()
+            workspace.conversations = conversations
+            print("✅ Loaded \(conversations.count) conversations")
+        } catch {
+            print("⚠️ Failed to load conversations: \(error)")
+        }
+    }
+
+    /// Save a conversation to persistent storage
+    func saveConversation(_ conversation: Conversation) async {
+        guard let store = conversationStore else { return }
+
+        do {
+            try await store.save(conversation)
+        } catch {
+            print("⚠️ Failed to save conversation: \(error)")
+        }
+
+        // Update local workspace copy
+        if let index = workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
+            workspace.conversations[index] = conversation
+        } else {
+            workspace.conversations.insert(conversation, at: 0)
+        }
+    }
+
+    /// Create a new conversation and persist it
+    func createConversation(
+        title: String,
+        agentName: String? = nil,
+        spaceId: SpaceID? = nil
+    ) async -> Conversation {
+        var conversation = Conversation(title: title, agentName: agentName)
+        conversation.spaceId = spaceId
+        await saveConversation(conversation)
+        return conversation
+    }
+
+    /// Delete a conversation
+    func deleteConversation(_ id: ConversationID) async {
+        guard let store = conversationStore else { return }
+
+        do {
+            try await store.delete(id)
+        } catch {
+            print("⚠️ Failed to delete conversation: \(error)")
+        }
+
+        workspace.conversations.removeAll { $0.id == id }
+    }
+
+    /// Load conversations for a specific space
+    func loadConversations(for spaceId: SpaceID) async -> [Conversation] {
+        guard let store = conversationStore else { return [] }
+
+        do {
+            return try await store.load(for: spaceId)
+        } catch {
+            print("⚠️ Failed to load conversations for space: \(error)")
+            return []
         }
     }
 
@@ -1172,12 +1304,7 @@ public final class AppState: ObservableObject {
     /// Load decision cards from manager
     func loadDecisionCards() async {
         decisionCards = await decisionManager.cards
-
-        // If empty, set up sample cards for development
-        if decisionCards.isEmpty {
-            await setupSampleDecisionCards()
-            decisionCards = await decisionManager.cards
-        }
+        // No sample data - only load actual cards
     }
 
     /// Approve a decision card
@@ -1215,13 +1342,9 @@ public final class AppState: ObservableObject {
     /// All reviews loaded from storage
     @Published var reviews: [Review] = []
 
-    /// Load reviews (from storage or sample data for development)
+    /// Load reviews (from storage)
     func loadReviews(status: ReviewStatus? = nil, searchText: String = "") async {
-        // For development, set up sample reviews if empty
-        if reviews.isEmpty {
-            setupSampleReviews()
-        }
-
+        // No sample data - only load actual reviews
         // Filter would happen here with real storage
     }
 
@@ -1365,12 +1488,7 @@ public final class AppState: ObservableObject {
     /// Load registered agents
     func loadRegisteredAgents() async {
         registeredAgents = await agentRegistry.agents
-
-        // If empty, set up sample agents for development
-        if registeredAgents.isEmpty {
-            await setupSampleAgents()
-            registeredAgents = await agentRegistry.agents
-        }
+        // No sample agents - only show user-created agents
     }
 
     /// Register a new agent
@@ -1482,8 +1600,8 @@ public final class AppState: ObservableObject {
 // MARK: - Supporting Types
 
 enum SidebarItem: String, CaseIterable, Identifiable {
-    // Primary - Open Space is the default entry point
-    case openSpace
+    // Primary - Headspace is the root/cross-space view and landing page
+    case headspace
 
     // Spaces (replaces Knowledge Workspace)
     case spaces
@@ -1492,8 +1610,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
 
     // Operations
     case tasks
-    case decisions
-    case approvals
+    case reviews  // Combined Decisions + Approvals
 
     // Infrastructure
     case agents
@@ -1504,13 +1621,12 @@ enum SidebarItem: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .openSpace: "Open Space"
+        case .headspace: "Headspace"  // Cross-space activity view
         case .spaces: "Spaces"
         case .documents: "Documents"
         case .conversations: "Conversations"
         case .tasks: "Tasks"
-        case .decisions: "Decisions"
-        case .approvals: "Approvals"
+        case .reviews: "Reviews"
         case .agents: "Agents"
         case .connections: "Connections"
         case .settings: "Settings"
@@ -1519,13 +1635,12 @@ enum SidebarItem: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .openSpace: "square.and.pencil"
+        case .headspace: "brain.head.profile"  // Headspace icon
         case .spaces: "folder"
         case .documents: "doc.text"
         case .conversations: "bubble.left.and.bubble.right"
         case .tasks: "checklist"
-        case .decisions: "checkmark.seal"
-        case .approvals: "checkmark.shield"
+        case .reviews: "checkmark.seal"
         case .agents: "person.2"
         case .connections: "link"
         case .settings: "gearshape"
@@ -1535,11 +1650,11 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     /// Group for sidebar sections
     var group: SidebarGroup {
         switch self {
-        case .openSpace:
+        case .headspace:
             return .primary
         case .spaces, .documents, .conversations:
             return .workspace
-        case .tasks, .decisions, .approvals:
+        case .tasks, .reviews:
             return .activity
         case .agents, .connections, .settings:
             return .infrastructure
@@ -1547,7 +1662,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     }
 
     static var primaryItems: [SidebarItem] {
-        [.openSpace]
+        [.headspace]
     }
 
     static var workspaceItems: [SidebarItem] {
@@ -1555,7 +1670,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     }
 
     static var activityItems: [SidebarItem] {
-        [.tasks, .decisions, .approvals]
+        [.tasks, .reviews]
     }
 
     static var infrastructureItems: [SidebarItem] {
@@ -1700,6 +1815,7 @@ struct SpaceViewModel: Identifiable {
     let updatedAt: Date
     var isStarred: Bool
     var path: URL?
+    var channels: [ChannelViewModel] = []  // Child spaces/folders as channels
 
     init(
         id: String = UUID().uuidString,
@@ -1712,7 +1828,8 @@ struct SpaceViewModel: Identifiable {
         contributorCount: Int = 1,
         updatedAt: Date = Date(),
         isStarred: Bool = false,
-        path: URL? = nil
+        path: URL? = nil,
+        channels: [ChannelViewModel] = []
     ) {
         self.id = id
         self.name = name
@@ -1725,6 +1842,7 @@ struct SpaceViewModel: Identifiable {
         self.contributorCount = contributorCount
         self.updatedAt = updatedAt
         self.isStarred = isStarred
+        self.channels = channels
     }
 
     /// Create from AgentKit Space
@@ -1739,6 +1857,13 @@ struct SpaceViewModel: Identifiable {
         self.contributorCount = await space.contributors().count + 1
         self.updatedAt = Date()  // TODO: Get from space
         self.isStarred = await space.isStarred
+
+        // Load child spaces as channels
+        var loadedChannels: [ChannelViewModel] = []
+        for childSpace in await space.childSpaces() {
+            loadedChannels.append(await ChannelViewModel(from: childSpace))
+        }
+        self.channels = loadedChannels
     }
 
     private static func color(from spaceColor: SpaceColor) -> Color {
@@ -1753,6 +1878,39 @@ struct SpaceViewModel: Identifiable {
         case .yellow: return .yellow
         case .gray: return .gray
         }
+    }
+}
+
+// MARK: - Channel View Model
+
+/// A channel within a space (maps to child space or folder)
+struct ChannelViewModel: Identifiable {
+    let id: String
+    let name: String
+    let icon: String
+    let unreadCount: Int
+    let threadCount: Int
+
+    init(
+        id: String = UUID().uuidString,
+        name: String,
+        icon: String = "number",
+        unreadCount: Int = 0,
+        threadCount: Int = 0
+    ) {
+        self.id = id
+        self.name = name
+        self.icon = icon
+        self.unreadCount = unreadCount
+        self.threadCount = threadCount
+    }
+
+    init(from space: Space) async {
+        self.id = space.id.rawValue
+        self.name = space.name
+        self.icon = space.icon
+        self.unreadCount = 0  // TODO: Track unread
+        self.threadCount = await space.documents().count
     }
 }
 

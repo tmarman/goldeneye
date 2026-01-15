@@ -16,12 +16,19 @@ public struct Conversation: Identifiable, Codable, Sendable {
     public var tagIds: [TagID]
     public var isStarred: Bool
     public var isPinned: Bool
+    public var isArchived: Bool
     public let createdAt: Date
     public var updatedAt: Date
 
     /// A2A context ID for maintaining conversation continuity with the agent server.
     /// When set, subsequent messages use the same context, preserving full history.
     public var contextId: String?
+
+    /// The model ID for direct model conversations (e.g., "mlx-community/Qwen2.5-7B-Instruct-4bit")
+    public var modelId: String?
+
+    /// The provider ID for direct model conversations (e.g., UUID of the ProviderConfig)
+    public var providerId: String?
 
     public init(
         id: ConversationID = ConversationID(),
@@ -33,7 +40,10 @@ public struct Conversation: Identifiable, Codable, Sendable {
         tagIds: [TagID] = [],
         isStarred: Bool = false,
         isPinned: Bool = false,
-        contextId: String? = nil
+        isArchived: Bool = false,
+        contextId: String? = nil,
+        modelId: String? = nil,
+        providerId: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -44,7 +54,10 @@ public struct Conversation: Identifiable, Codable, Sendable {
         self.tagIds = tagIds
         self.isStarred = isStarred
         self.isPinned = isPinned
+        self.isArchived = isArchived
         self.contextId = contextId
+        self.modelId = modelId
+        self.providerId = providerId
         self.createdAt = Date()
         self.updatedAt = Date()
     }
@@ -158,5 +171,25 @@ public struct MessageMetadata: Codable, Sendable {
         self.outputTokens = outputTokens
         self.latencyMs = latencyMs
         self.toolsUsed = toolsUsed
+    }
+
+    /// Convenience initializer for chat completions
+    public init(
+        model: String?,
+        provider: String?,
+        tokens: Int?,
+        latency: TimeInterval?
+    ) {
+        self.model = model
+        self.provider = provider
+        self.inputTokens = nil
+        self.outputTokens = tokens
+        self.latencyMs = latency.map { Int($0 * 1000) }
+        self.toolsUsed = nil
+    }
+
+    /// Total tokens used (output only for now)
+    public var tokens: Int? {
+        outputTokens
     }
 }

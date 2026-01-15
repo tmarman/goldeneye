@@ -164,15 +164,9 @@ struct SessionsView: View {
     private func loadSessions() async {
         isLoading = true
 
-        // Load from SessionManager
+        // Load from SessionManager - no mock data
         let allSessions = await SessionManager.shared.listAllSessions()
         sessions = allSessions
-
-        // If empty, show mock data for development
-        if sessions.isEmpty {
-            sessions = mockSessions()
-        }
-
         isLoading = false
     }
 
