@@ -23,10 +23,10 @@ let package = Package(
             name: "AgentKitCLI",
             targets: ["AgentKitCLI"]
         ),
-        // macOS Console app
+        // Envoy - macOS app for agent interaction
         .executable(
-            name: "AgentKitConsole",
-            targets: ["AgentKitConsole"]
+            name: "Envoy",
+            targets: ["Envoy"]
         ),
     ],
     dependencies: [
@@ -87,13 +87,13 @@ let package = Package(
             path: "Sources/AgentKitCLI"
         ),
 
-        // MARK: - macOS Console App
+        // MARK: - Envoy (macOS App)
         .executableTarget(
-            name: "AgentKitConsole",
+            name: "Envoy",
             dependencies: [
                 "AgentKit",
             ],
-            path: "Sources/AgentKitConsole"
+            path: "Sources/Envoy"
         ),
 
         // MARK: - Tests

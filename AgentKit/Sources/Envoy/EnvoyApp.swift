@@ -57,14 +57,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 // MARK: - Main App (minimal - delegate handles window)
 
 @main
-struct AgentKitConsoleApp: App {
+struct EnvoyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     private var appState: AppState { AppState.shared }
 
     var body: some Scene {
         // Menu bar only - window handled by AppDelegate
-        MenuBarExtra("AgentKit", systemImage: appState.menuBarIcon) {
+        MenuBarExtra("Envoy", systemImage: appState.menuBarIcon) {
             MenuBarView()
                 .environmentObject(appState)
         }
