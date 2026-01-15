@@ -10,7 +10,7 @@ struct ContentView: View {
             SidebarView(columnVisibility: $columnVisibility)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 280, max: 350)
         } detail: {
-            DetailView()
+            DetailView(columnVisibility: $columnVisibility)
                 .toolbar(removing: .title)
         }
         .navigationSplitViewStyle(.balanced)
@@ -122,17 +122,8 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .toolbar(removing: .sidebarToggle) // Remove default toggle
         .safeAreaInset(edge: .top) {
-            // Compact header with title, collapse button, and actions
+            // Compact header with title and actions
             HStack(spacing: 12) {
-                // Sidebar collapse button
-                Button(action: toggleSidebar) {
-                    Image(systemName: "sidebar.left")
-                        .font(.title3)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Toggle Sidebar")
-
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Goldeneye")
                         .font(.headline)
@@ -178,16 +169,6 @@ struct SidebarView: View {
 
     private var itemCount: Int {
         appState.workspace.documents.count + appState.workspace.conversations.count
-    }
-
-    private func toggleSidebar() {
-        withAnimation(.easeInOut(duration: 0.25)) {
-            if columnVisibility == .all {
-                columnVisibility = .detailOnly
-            } else {
-                columnVisibility = .all
-            }
-        }
     }
 
     private func sidebarRow(for item: SidebarItem) -> some View {
@@ -517,34 +498,58 @@ struct ServerStatusPopover: View {
 
 struct DetailView: View {
     @EnvironmentObject private var appState: AppState
+    @Binding var columnVisibility: NavigationSplitViewVisibility
 
     var body: some View {
-        // Check if a specific space is selected
-        if let spaceId = appState.selectedSpaceId {
-            SpaceDetailView(spaceId: spaceId)
-        } else {
-            // Regular sidebar navigation
-            switch appState.selectedSidebarItem {
-            case .openSpace:
-                OpenSpaceView()
-            case .spaces:
-                SpacesListView()
-            case .documents:
-                DocumentsView()
-            case .conversations:
-                ConversationsView()
-            case .tasks:
-                TasksView()
-            case .decisions:
-                DecisionCardsView()
-            case .approvals:
-                ApprovalsView()
-            case .agents:
-                AgentsView()
-            case .connections:
-                ConnectionsView()
-            case .settings:
-                SettingsDetailView()
+        Group {
+            // Check if a specific space is selected
+            if let spaceId = appState.selectedSpaceId {
+                SpaceDetailView(spaceId: spaceId)
+            } else {
+                // Regular sidebar navigation
+                switch appState.selectedSidebarItem {
+                case .openSpace:
+                    OpenSpaceView()
+                case .spaces:
+                    SpacesListView()
+                case .documents:
+                    DocumentsView()
+                case .conversations:
+                    ConversationsView()
+                case .tasks:
+                    TasksView()
+                case .decisions:
+                    DecisionCardsView()
+                case .approvals:
+                    ApprovalsView()
+                case .agents:
+                    AgentsView()
+                case .connections:
+                    ConnectionsView()
+                case .settings:
+                    SettingsDetailView()
+                }
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button(action: toggleSidebar) {
+                    Image(systemName: "sidebar.left")
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Sidebar")
+            }
+        }
+    }
+
+    private func toggleSidebar() {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            if columnVisibility == .all {
+                columnVisibility = .detailOnly
+            } else {
+                columnVisibility = .all
             }
         }
     }
