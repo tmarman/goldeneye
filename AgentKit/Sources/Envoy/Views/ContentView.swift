@@ -519,27 +519,33 @@ struct DetailView: View {
     @EnvironmentObject private var appState: AppState
 
     var body: some View {
-        switch appState.selectedSidebarItem {
-        case .openSpace:
-            OpenSpaceView()
-        case .spaces:
-            SpacesListView()
-        case .documents:
-            DocumentsView()
-        case .conversations:
-            ConversationsView()
-        case .tasks:
-            TasksView()
-        case .decisions:
-            DecisionCardsView()
-        case .approvals:
-            ApprovalsView()
-        case .agents:
-            AgentsView()
-        case .connections:
-            ConnectionsView()
-        case .settings:
-            SettingsDetailView()
+        // Check if a specific space is selected
+        if let spaceId = appState.selectedSpaceId {
+            SpaceDetailView(spaceId: spaceId)
+        } else {
+            // Regular sidebar navigation
+            switch appState.selectedSidebarItem {
+            case .openSpace:
+                OpenSpaceView()
+            case .spaces:
+                SpacesListView()
+            case .documents:
+                DocumentsView()
+            case .conversations:
+                ConversationsView()
+            case .tasks:
+                TasksView()
+            case .decisions:
+                DecisionCardsView()
+            case .approvals:
+                ApprovalsView()
+            case .agents:
+                AgentsView()
+            case .connections:
+                ConnectionsView()
+            case .settings:
+                SettingsDetailView()
+            }
         }
     }
 }
