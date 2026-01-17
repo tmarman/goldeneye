@@ -19,6 +19,75 @@ Goldeneye is an AI agent platform for Apple devices, built on top of **AgentKit*
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## Runtime Architecture
+
+Goldeneye operates through three interconnected layers, built on two complementary knowledge systems:
+
+### Knowledge Systems
+
+**World Knowledge** — What exists in your data
+- Vectors index Slack, email, web content
+- Spotlight searches local files
+- Read-only, searchable understanding
+
+**Built Understanding** — What you know
+- Scoped folders with markdown notes
+- Invisible git versioning
+- Evolving context that agents help build
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    KNOWLEDGE BACKBONE                        │
+│                                                              │
+│   WORLD KNOWLEDGE              BUILT UNDERSTANDING           │
+│   (what exists)                (what you know)               │
+│  ┌────────────────┐          ┌────────────────────┐         │
+│  │ Slack, Email,  │          │ ~/.goldeneye/spaces │         │
+│  │ Web, Spotlight │─informs─▶│ ├── work/           │         │
+│  │ (vectors/index)│          │ │   ├── context.md  │         │
+│  └────────────────┘          │ │   └── .git/       │         │
+│                              │ └── personal/       │         │
+│                              └────────────────────┘         │
+└────────────────────────┬────────────────────────────────────┘
+                         │ shared context
+┌────────────────────────┼────────────────────────────────────┐
+│                        ▼                                     │
+│                   ENVOY APP                                  │
+│          Interactive chat, approvals, coaching               │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  Dashboard │ Spaces │ Agents │ Approvals │ Settings  │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                        ▲                                     │
+│                    user input                                │
+└────────────────────────┬────────────────────────────────────┘
+                         │ delegated tasks
+┌────────────────────────┼────────────────────────────────────┐
+│                        ▼                                     │
+│               BACKGROUND RUNNERS                             │
+│        Autonomous execution on shared context                │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐    │
+│  │  Task    │  │   CLI    │  │ Scheduled│  │  Watch   │    │
+│  │ Runner   │  │ Runner   │  │   Jobs   │  │ Triggers │    │
+│  └──────────┘  └──────────┘  └──────────┘  └──────────┘    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### The Three Layers
+
+| Layer | Purpose | Key Components |
+|-------|---------|----------------|
+| **Knowledge Backbone** | Context acquisition & understanding | Vector indexes, Spotlight, scoped folders with git |
+| **Envoy App** | Interactive human interface | Dashboard, Spaces, Agents, Approvals |
+| **Background Runners** | Autonomous agent execution | Task Runner, CLI Runner, Scheduled Jobs |
+
+**Knowledge Backbone** combines two systems:
+- **World Knowledge**: Vector indexes + Spotlight for searching what exists in your data
+- **Built Understanding**: Scoped folders with evolving markdown notes—this is what agents help you *build*
+
+**Envoy App** is where you interact: chat with agents, review approvals, browse knowledge, configure your system.
+
+**Background Runners** let agents act autonomously: indexing, scheduled maintenance, watch triggers for real-time response.
+
 ### AgentKit
 
 AgentKit is the foundational Swift framework that provides:

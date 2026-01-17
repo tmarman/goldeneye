@@ -1,5 +1,60 @@
 # AgentKit Architecture Overview
 
+## Runtime Layers
+
+The system operates through three interconnected layers:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    KNOWLEDGE BACKBONE                        │
+│                                                              │
+│   WORLD KNOWLEDGE              BUILT UNDERSTANDING           │
+│   (what exists)                (what you know)               │
+│  ┌────────────────┐          ┌────────────────────┐         │
+│  │ Slack, Email,  │          │ ~/.goldeneye/spaces │         │
+│  │ Web, Spotlight │─informs─▶│ ├── work/           │         │
+│  │ (vectors/index)│          │ │   ├── context.md  │         │
+│  └────────────────┘          │ │   └── .git/       │         │
+│                              │ └── personal/       │         │
+│                              └────────────────────┘         │
+└────────────────────────┬────────────────────────────────────┘
+                         │ shared context
+┌────────────────────────┼────────────────────────────────────┐
+│                        ▼                                     │
+│                   ENVOY APP                                  │
+│          Interactive chat, approvals, coaching               │
+└────────────────────────┬────────────────────────────────────┘
+                         │ delegated tasks
+┌────────────────────────┼────────────────────────────────────┐
+│                        ▼                                     │
+│               BACKGROUND RUNNERS                             │
+│        Autonomous execution on shared context                │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Knowledge Backbone
+
+Two complementary systems:
+
+| System | Purpose | Storage | Examples |
+|--------|---------|---------|----------|
+| **World Knowledge** | What exists in your data | Vector indexes, Spotlight | "What's in my Slack?" |
+| **Built Understanding** | What you know | Scoped folders + git | "What do I know about this project?" |
+
+**World Knowledge** is read-only indexing of external data (Slack, email, web, files via Spotlight).
+
+**Built Understanding** is your evolving notes—scoped by folder, versioned by git, human-readable markdown.
+
+### Envoy App
+
+Interactive SwiftUI interface for human-agent collaboration: chat, approvals, knowledge browsing, configuration.
+
+### Background Runners
+
+Autonomous agent execution: task runners, CLI execution, scheduled jobs, watch triggers.
+
+---
+
 ## System Diagram
 
 ```

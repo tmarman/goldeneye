@@ -1,11 +1,16 @@
 # Current Project State
 
-**Last Updated**: 2026-01-15
-**Phase**: User Acceptance → Polish
+**Last Updated**: 2026-01-17
+**Phase**: Knowledge Backbone + Polish
 
 ## Status Summary
 
-AgentKitConsole UI complete but requires polish based on user acceptance feedback. 40 feedback items captured in F003, prioritized into critical bugs, UX issues, design philosophy changes, and future features.
+Core runtime architecture now has three layers:
+1. **Knowledge Backbone** — World knowledge (vectors) + Built understanding (scoped folders)
+2. **Envoy App** — Interactive UI for chat, approvals, and configuration
+3. **Background Runners** — Autonomous agent execution
+
+AgentKitConsole renamed to Envoy. UI requires polish based on user acceptance feedback.
 
 **Blocking Issues**:
 - Threads not persisting/swapping with spaces (#2, #29)
@@ -19,9 +24,38 @@ AgentKitConsole UI complete but requires polish based on user acceptance feedbac
 | **F001** | Complete | V1 Local Runtime (Mac Studio) |
 | **F002** | Complete | Console UI Development |
 | **F003** | **Active** | User Feedback & Polish (40 items) |
+| **F008** | Complete | Knowledge Backbone |
+| **F009** | Complete | Slack History Indexer |
+| **F010** | Complete | Background Task Runner |
 | F004 | Backlog | About Me Space (Concierge) |
 | F005 | Backlog | Agent Providers (Claude Code, Codex) |
 | F006 | Backlog | Docs & Landing Page |
+
+## Knowledge Backbone (F008-F010)
+
+Two complementary knowledge systems:
+
+**World Knowledge** — What exists (indexed, searchable)
+
+- **KnowledgeStore**: Central actor managing all operations
+- **KnowledgeDatabase**: SQLite storage with WAL mode
+- **EmbeddingEngine**: MLX-based vector embeddings
+- **Chunker**: Multiple chunking strategies (fixed, sentence, paragraph, semantic, markdown)
+- **SlackIndexer**: Full Slack workspace indexing with rate limiting
+- **MCP Tools**: knowledge_search, knowledge_ingest, knowledge_stats, knowledge_entities
+
+**Built Understanding** — What you know (evolving, scoped)
+
+- **KnowledgeSpaceManager**: Multiple isolated knowledge spaces
+- Scoped folders with invisible git backing
+- Human-readable markdown context files
+- Folder hierarchy defines context boundaries
+
+**Background Execution**
+
+- **BackgroundTaskRunner**: General task execution with progress tracking and cancellation
+- **CLIRunner**: Shell command execution (existing)
+- Pre-built tasks: Slack full indexing, incremental sync
 
 ## V1 Implementation Complete
 
