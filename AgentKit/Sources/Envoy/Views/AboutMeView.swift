@@ -1,4 +1,5 @@
 import AgentKit
+import MarkdownUI
 import SwiftUI
 
 // MARK: - About Me View
@@ -16,14 +17,20 @@ struct AboutMeView: View {
     @State private var isIndexing = false
     @FocusState private var isInputFocused: Bool
 
+    /// Local state to track indexing progress (synced from service)
+    @State private var indexingProgress: Double = 0.0
+    @State private var indexingStatus: String = "Not started"
+    @State private var insights: [UserInsight] = []
+    @State private var suggestedSpaces: [SpaceSuggestion] = []
+
     private var aboutMeService: AboutMeService {
         appState.aboutMeService
     }
 
-    /// The Concierge conversation
-    private var conciergeConversation: Conversation? {
-        guard let convId = aboutMeService.conciergeConversationId else { return nil }
-        return appState.workspace.conversations.first { $0.id == convId }
+    /// The Concierge thread
+    private var conciergeThread: AgentKit.Thread? {
+        guard let threadId = aboutMeService.conciergeThreadId else { return nil }
+        return appState.workspace.threads.first { $0.id == threadId }
     }
 
     var body: some View {
@@ -36,8 +43,8 @@ struct AboutMeView: View {
                 Divider()
 
                 // Messages
-                if let conversation = conciergeConversation {
-                    messageList(conversation)
+                if let thread = conciergeThread {
+                    messageList(thread)
                 } else {
                     welcomeView
                 }
@@ -72,10 +79,10 @@ struct AboutMeView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("Concierge")
-                    .font(.title3.weight(.semibold))
+                    .font(.title3.weight(.medium))
                 Text("Your personal assistant")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
             }
 
             Spacer()
@@ -125,7 +132,7 @@ struct AboutMeView: View {
                 .foregroundStyle(.blue)
 
             Text("Welcome to About Me")
-                .font(.title2.weight(.semibold))
+                .font(.title2.weight(.medium))
 
             Text("Your Concierge is ready to help you organize your work.")
                 .font(.body)
@@ -146,19 +153,19 @@ struct AboutMeView: View {
 
     // MARK: - Message List
 
-    private func messageList(_ conversation: Conversation) -> some View {
+    private func messageList(_ thread: AgentKit.Thread) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
-                    ForEach(conversation.messages) { message in
+                    ForEach(thread.messages) { message in
                         messageRow(message)
                             .id(message.id)
                     }
                 }
                 .padding()
             }
-            .onChange(of: conversation.messages.count) { _, _ in
-                if let lastMessage = conversation.messages.last {
+            .onChange(of: thread.messages.count) { _, _ in
+                if let lastMessage = thread.messages.last {
                     withAnimation {
                         proxy.scrollTo(lastMessage.id, anchor: .bottom)
                     }
@@ -167,7 +174,7 @@ struct AboutMeView: View {
         }
     }
 
-    private func messageRow(_ message: ConversationMessage) -> some View {
+    private func messageRow(_ message: AgentKit.ThreadMessage) -> some View {
         HStack(alignment: .top, spacing: 12) {
             if message.role == .assistant {
                 // Concierge avatar
@@ -194,14 +201,15 @@ struct AboutMeView: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(message.role == .assistant ? "Concierge" : "You")
-                        .font(.subheadline.weight(.semibold))
+                        .font(.subheadline.weight(.medium))
                     Text(message.timestamp, style: .time)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
                 }
 
-                // Render markdown content
-                Text(LocalizedStringKey(message.content))
+                // Render markdown content using MarkdownUI for proper formatting
+                Markdown(message.textContent)
+                    .markdownTheme(.assistantMessage)
                     .textSelection(.enabled)
             }
 
@@ -236,76 +244,316 @@ struct AboutMeView: View {
     // MARK: - Insights Sidebar
 
     private var insightsSidebar: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Progress section
-                if aboutMeService.indexingProgress > 0 {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Indexing Progress", systemImage: "chart.bar.fill")
-                            .font(.headline)
-
-                        ProgressView(value: aboutMeService.indexingProgress)
-                        Text(aboutMeService.indexingStatus)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Live indexing section (shown during indexing)
+                    if aboutMeService.isIndexing {
+                        liveIndexingView
                     }
-                    .padding()
-                    .background(Color(nsColor: .controlBackgroundColor))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
 
-                // Insights section
-                if !aboutMeService.insights.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Insights", systemImage: "lightbulb.fill")
-                            .font(.headline)
-
-                        ForEach(aboutMeService.insights) { insight in
-                            insightCard(insight)
-                        }
+                    // Progress section
+                    if aboutMeService.indexingProgress > 0 {
+                        progressSection
                     }
-                }
 
-                // Suggestions section
-                if !aboutMeService.suggestedSpaces.isEmpty {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Label("Suggested Spaces", systemImage: "sparkles")
-                            .font(.headline)
+                    // File types discovered
+                    if !aboutMeService.fileTypeCounts.isEmpty {
+                        fileTypesSection
+                    }
 
-                        ForEach(aboutMeService.suggestedSpaces) { suggestion in
-                            suggestionCard(suggestion)
-                        }
+                    // Insights section
+                    if !aboutMeService.insights.isEmpty {
+                        insightsSection
+                    }
+
+                    // Suggestions section
+                    if !aboutMeService.suggestedSpaces.isEmpty {
+                        suggestionsSection
+                    }
+
+                    // Activity Log (collapsible)
+                    if !aboutMeService.indexingLog.isEmpty {
+                        activityLogSection
+                    }
+
+                    // Empty state
+                    if !aboutMeService.isIndexing && aboutMeService.insights.isEmpty && aboutMeService.suggestedSpaces.isEmpty {
+                        emptyStateView
                     }
                 }
-
-                // Empty state
-                if aboutMeService.insights.isEmpty && aboutMeService.suggestedSpaces.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "sparkles")
-                            .font(.system(size: 40))
-                            .foregroundStyle(.secondary)
-
-                        Text("No insights yet")
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-
-                        Text("Start indexing to discover patterns in your work")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .multilineTextAlignment(.center)
-
-                        Button(action: startIndexing) {
-                            Label("Start Indexing", systemImage: "play.fill")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 40)
-                }
+                .padding()
             }
-            .padding()
         }
         .background(Color(nsColor: .controlBackgroundColor).opacity(0.3))
+    }
+
+    // MARK: - Live Indexing View
+
+    private var liveIndexingView: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                ProgressView()
+                    .scaleEffect(0.8)
+                Text("Indexing in Progress")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+            }
+
+            // Current file being scanned
+            if !aboutMeService.currentlyScanning.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .foregroundStyle(.blue)
+                    Text(aboutMeService.currentlyScanning)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+
+            // Status
+            Text(aboutMeService.indexingStatus)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            // Progress bar
+            ProgressView(value: aboutMeService.indexingProgress)
+                .tint(.blue)
+
+            Text("\(Int(aboutMeService.indexingProgress * 100))% complete")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding()
+        .background(Color.blue.opacity(0.1))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+        )
+    }
+
+    // MARK: - Progress Section
+
+    private var progressSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label("Progress", systemImage: aboutMeService.indexingProgress >= 1.0 ? "checkmark.circle.fill" : "chart.bar.fill")
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(aboutMeService.indexingProgress >= 1.0 ? .green : .primary)
+                Spacer()
+                Text("\(Int(aboutMeService.indexingProgress * 100))%")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+
+            if aboutMeService.indexingProgress < 1.0 {
+                ProgressView(value: aboutMeService.indexingProgress)
+            }
+
+            Text(aboutMeService.indexingStatus)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding()
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    // MARK: - File Types Section
+
+    private var fileTypesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label("Files Indexed", systemImage: "doc.on.doc.fill")
+                .font(.subheadline.weight(.medium))
+
+            // Top file types as chips
+            let sortedTypes = aboutMeService.fileTypeCounts.sorted { $0.value > $1.value }.prefix(8)
+            FlowLayout(spacing: 6) {
+                ForEach(Array(sortedTypes), id: \.key) { ext, count in
+                    HStack(spacing: 4) {
+                        Text(".\(ext)")
+                            .font(.caption.weight(.medium))
+                        Text("\(count)")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(colorForExtension(ext).opacity(0.15))
+                    .clipShape(Capsule())
+                }
+            }
+
+            // Total count
+            let total = aboutMeService.fileTypeCounts.values.reduce(0, +)
+            Text("\(total) files total")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        .padding()
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    // MARK: - Insights Section
+
+    private var insightsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Insights", systemImage: "lightbulb.fill")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.yellow)
+
+            ForEach(aboutMeService.insights) { insight in
+                insightCard(insight)
+            }
+        }
+    }
+
+    // MARK: - Suggestions Section
+
+    private var suggestionsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Suggested Spaces", systemImage: "sparkles")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.purple)
+
+            ForEach(aboutMeService.suggestedSpaces) { suggestion in
+                suggestionCard(suggestion)
+            }
+        }
+    }
+
+    // MARK: - Activity Log Section
+
+    @State private var showFullLog = false
+
+    private var activityLogSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button(action: { showFullLog.toggle() }) {
+                HStack {
+                    Label("Activity Log", systemImage: "list.bullet.rectangle")
+                        .font(.subheadline.weight(.medium))
+                    Spacer()
+                    Image(systemName: showFullLog ? "chevron.up" : "chevron.down")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+
+            if showFullLog {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(aboutMeService.indexingLog.suffix(20).reversed()) { entry in
+                        logEntryRow(entry)
+                    }
+                }
+                .padding(.top, 4)
+            } else {
+                // Show just the last 3 entries
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(aboutMeService.indexingLog.suffix(3).reversed()) { entry in
+                        logEntryRow(entry)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(Color(nsColor: .controlBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func logEntryRow(_ entry: IndexingLogEntry) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: iconForLogType(entry.type))
+                .font(.caption)
+                .foregroundStyle(colorForLogType(entry.type))
+                .frame(width: 16)
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(entry.message)
+                    .font(.caption)
+                    .lineLimit(1)
+                if let detail = entry.detail {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Text(entry.timestamp, style: .time)
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+        }
+    }
+
+    private func iconForLogType(_ type: IndexingLogEntry.LogType) -> String {
+        switch type {
+        case .directory: return "folder.fill"
+        case .file: return "doc.fill"
+        case .insight: return "lightbulb.fill"
+        case .suggestion: return "sparkles"
+        case .complete: return "checkmark.circle.fill"
+        case .info: return "info.circle.fill"
+        }
+    }
+
+    private func colorForLogType(_ type: IndexingLogEntry.LogType) -> Color {
+        switch type {
+        case .directory: return .blue
+        case .file: return .gray
+        case .insight: return .yellow
+        case .suggestion: return .purple
+        case .complete: return .green
+        case .info: return .secondary
+        }
+    }
+
+    // MARK: - Empty State
+
+    private var emptyStateView: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+
+            Text("No insights yet")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+
+            Text("Start indexing to discover patterns in your work")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .multilineTextAlignment(.center)
+
+            Button(action: startIndexing) {
+                Label("Start Indexing", systemImage: "play.fill")
+            }
+            .buttonStyle(.bordered)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 40)
+    }
+
+    // MARK: - Helpers
+
+    private func colorForExtension(_ ext: String) -> Color {
+        switch ext {
+        case "swift", "m", "h": return .orange
+        case "ts", "tsx", "js", "jsx": return .blue
+        case "py": return .green
+        case "rs": return .red
+        case "go": return .cyan
+        case "md", "txt": return .purple
+        case "pdf": return .red
+        case "json", "yaml", "yml": return .yellow
+        default: return .gray
+        }
     }
 
     private func insightCard(_ insight: UserInsight) -> some View {
@@ -343,7 +591,7 @@ struct AboutMeView: View {
                     .foregroundStyle(colorForSuggestion(suggestion.color))
 
                 Text(suggestion.name)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.subheadline.weight(.medium))
 
                 Spacer()
             }
@@ -390,7 +638,15 @@ struct AboutMeView: View {
         isIndexing = true
         Task {
             await aboutMeService.startIndexing(appState: appState)
-            isIndexing = false
+
+            // Sync state from service after indexing completes
+            await MainActor.run {
+                indexingProgress = aboutMeService.indexingProgress
+                indexingStatus = aboutMeService.indexingStatus
+                insights = aboutMeService.insights
+                suggestedSpaces = aboutMeService.suggestedSpaces
+                isIndexing = false
+            }
         }
     }
 
@@ -405,14 +661,14 @@ struct AboutMeView: View {
     }
 
     private func handleUserMessage(_ content: String) async {
-        guard let convId = aboutMeService.conciergeConversationId,
-              let index = appState.workspace.conversations.firstIndex(where: { $0.id == convId }) else {
+        guard let threadId = aboutMeService.conciergeThreadId,
+              let index = appState.workspace.threads.firstIndex(where: { $0.id == threadId }) else {
             return
         }
 
         // Add user message
-        let userMessage = ConversationMessage(role: .user, content: content)
-        appState.workspace.conversations[index].messages.append(userMessage)
+        let userMessage = AgentKit.ThreadMessage.user(content)
+        appState.workspace.threads[index].messages.append(userMessage)
 
         // Handle common commands
         let lowercased = content.lowercased()
@@ -458,11 +714,11 @@ struct AboutMeView: View {
         }
 
         // Add assistant response
-        let assistantMessage = ConversationMessage(role: .assistant, content: response)
-        appState.workspace.conversations[index].messages.append(assistantMessage)
-        appState.workspace.conversations[index].updatedAt = Date()
+        let assistantMessage = AgentKit.ThreadMessage.assistant(response, agentName: "Concierge")
+        appState.workspace.threads[index].messages.append(assistantMessage)
+        appState.workspace.threads[index].updatedAt = Date()
 
-        await appState.saveConversation(appState.workspace.conversations[index])
+        await appState.saveThread(appState.workspace.threads[index])
     }
 
     private func createSpace(_ suggestion: SpaceSuggestion) {

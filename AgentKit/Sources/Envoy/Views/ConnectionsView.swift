@@ -538,31 +538,7 @@ struct DiscoverableConnection {
     let icon: String
 }
 
-// MARK: - Sample Data
-
-private let sampleConnections: [MCPConnection] = [
-    MCPConnection(
-        name: "Filesystem",
-        description: "Local file access for documents and data",
-        icon: "folder",
-        status: .connected,
-        tools: ["read_file", "write_file", "list_directory"]
-    ),
-    MCPConnection(
-        name: "PostgreSQL",
-        description: "Query your database with natural language",
-        icon: "cylinder",
-        status: .connected,
-        tools: ["query", "describe_table", "list_tables"]
-    ),
-    MCPConnection(
-        name: "Calendar",
-        description: "Access your calendar events",
-        icon: "calendar",
-        status: .disconnected,
-        tools: []
-    )
-]
+// MARK: - Discoverable Connection Types
 
 private let discoverableConnections: [DiscoverableConnection] = [
     DiscoverableConnection(name: "GitHub", icon: "arrow.triangle.branch"),

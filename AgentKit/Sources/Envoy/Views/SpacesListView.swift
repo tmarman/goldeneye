@@ -37,16 +37,49 @@ struct SpacesListView: View {
 
             Divider()
 
-            // Spaces grid
-            ScrollView {
-                LazyVGrid(columns: [
-                    GridItem(.adaptive(minimum: 280, maximum: 400), spacing: 16)
-                ], spacing: 16) {
-                    ForEach(filteredSpaces) { space in
-                        SpaceCard(space: space)
+            // Spaces grid or empty state
+            if filteredSpaces.isEmpty {
+                // Empty state
+                VStack(spacing: 16) {
+                    Spacer()
+
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.tertiary)
+
+                    Text(searchText.isEmpty ? "No Spaces Yet" : "No Results")
+                        .font(.title3.weight(.medium))
+
+                    Text(searchText.isEmpty
+                        ? "Create your first space to organize your work, documents, and conversations."
+                        : "No spaces match \"\(searchText)\"")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 300)
+
+                    if searchText.isEmpty {
+                        Button(action: { appState.showNewSpaceSheet = true }) {
+                            Label("Create Space", systemImage: "plus")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
                     }
+
+                    Spacer()
                 }
-                .padding()
+                .frame(maxWidth: .infinity)
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [
+                        GridItem(.adaptive(minimum: 280, maximum: 400), spacing: 16)
+                    ], spacing: 16) {
+                        ForEach(filteredSpaces) { space in
+                            SpaceCard(space: space)
+                        }
+                    }
+                    .padding()
+                }
             }
         }
         .navigationTitle("Spaces")
@@ -368,70 +401,3 @@ struct NewSpaceSheet: View {
         }
     }
 }
-
-// MARK: - Sample Data (used when no real spaces exist)
-
-let sampleSpaces: [SpaceViewModel] = [
-    SpaceViewModel(
-        name: "Work Projects",
-        description: "All work-related projects and documentation",
-        ownerName: "You",
-        icon: "briefcase",
-        color: .blue,
-        documentCount: 24,
-        contributorCount: 3,
-        updatedAt: Date().addingTimeInterval(-3600),
-        isStarred: true,
-        channels: [
-            ChannelViewModel(name: "general", icon: "number", unreadCount: 3, threadCount: 12),
-            ChannelViewModel(name: "planning", icon: "number", unreadCount: 0, threadCount: 8),
-            ChannelViewModel(name: "design", icon: "number", unreadCount: 1, threadCount: 5)
-        ]
-    ),
-    SpaceViewModel(
-        name: "Research",
-        description: "Research papers, notes, and literature reviews",
-        ownerName: "Research Agent",
-        icon: "book",
-        color: .purple,
-        documentCount: 47,
-        contributorCount: 2,
-        updatedAt: Date().addingTimeInterval(-7200),
-        isStarred: true,
-        channels: [
-            ChannelViewModel(name: "papers", icon: "doc.text", unreadCount: 2, threadCount: 24),
-            ChannelViewModel(name: "notes", icon: "note.text", unreadCount: 0, threadCount: 15),
-            ChannelViewModel(name: "ideas", icon: "lightbulb", unreadCount: 5, threadCount: 8)
-        ]
-    ),
-    SpaceViewModel(
-        name: "Personal Goals",
-        description: "Career goals, health tracking, personal development",
-        ownerName: "You",
-        icon: "star",
-        color: .orange,
-        documentCount: 12,
-        contributorCount: 1,
-        updatedAt: Date().addingTimeInterval(-86400),
-        isStarred: false,
-        channels: [
-            ChannelViewModel(name: "career", icon: "briefcase", unreadCount: 0, threadCount: 4),
-            ChannelViewModel(name: "health", icon: "heart", unreadCount: 0, threadCount: 6)
-        ]
-    ),
-    SpaceViewModel(
-        name: "Side Projects",
-        description: nil,
-        ownerName: "Technical Agent",
-        icon: "gearshape",
-        color: .green,
-        documentCount: 8,
-        contributorCount: 2,
-        updatedAt: Date().addingTimeInterval(-172800),
-        isStarred: false,
-        channels: [
-            ChannelViewModel(name: "envoy-app", icon: "app", unreadCount: 1, threadCount: 3),
-            ChannelViewModel(name: "experiments", icon: "flask", unreadCount: 0, threadCount: 5)
-        ]
-    )
-]

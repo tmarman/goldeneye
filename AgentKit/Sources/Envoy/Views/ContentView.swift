@@ -34,8 +34,8 @@ struct ContentView: View {
         .sheet(isPresented: $appState.showNewDocumentSheet) {
             NewDocumentSheet()
         }
-        .sheet(isPresented: $appState.showNewConversationSheet) {
-            NewConversationSheet()
+        .sheet(isPresented: $appState.showNewThreadSheet) {
+            NewThreadSheet()
         }
         .sheet(isPresented: $appState.showNewCoachingSheet) {
             NewCoachingSheet()
@@ -64,9 +64,22 @@ struct ContentView: View {
         .sheet(isPresented: $appState.showModelPicker) {
             QuickModelSetupSheet()
         }
+        // Onboarding sheet (first launch or triggered from Settings)
+        .sheet(isPresented: $appState.showOnboarding) {
+            OnboardingView(isPresented: $appState.showOnboarding)
+        }
         // Keyboard shortcut for model picker
         .onReceive(NotificationCenter.default.publisher(for: .openModelPicker)) { _ in
             appState.showModelPicker = true
+        }
+        // Check for first launch onboarding
+        .onAppear {
+            if !UserDefaults.standard.bool(forKey: "hasCompletedOnboarding") {
+                // Small delay to let the app settle
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    appState.showOnboarding = true
+                }
+            }
         }
     }
 }
@@ -87,22 +100,29 @@ struct SidebarView: View {
 
     /// Recent agent conversations for DM-style display
     /// Only shows agents that have actual conversations (user-created)
+    /// Excludes About Me space conversations (shown as threads within that space)
     private var recentAgentChats: [AgentDMInfo] {
         var chats: [AgentDMInfo] = []
 
-        // Only show conversations that exist (user-initiated chats)
-        for conversation in appState.workspace.conversations.prefix(10) {
-            guard let agentName = conversation.agentName else { continue }
+        // Only show threads that exist (user-initiated chats)
+        // Exclude About Me space threads - they appear within that space
+        for thread in appState.workspace.threads.prefix(10) {
+            guard let agentName = thread.container.agentName else { continue }
+
+            // Skip About Me space threads (Concierge threads)
+            if thread.container.spaceId == AboutMeService.aboutMeSpaceId.rawValue {
+                continue
+            }
 
             // Find matching registered agent for color/icon, or use defaults
             let agent = appState.registeredAgents.first { $0.name == agentName }
 
             chats.append(AgentDMInfo(
-                id: conversation.id.rawValue,
+                id: thread.id.rawValue,
                 name: agentName,
                 avatar: agent.map { iconFor($0.profile) } ?? "person.crop.circle.fill",
                 color: agent.map { colorFor($0.profile) } ?? .blue,
-                lastMessage: conversation.messages.last?.content,
+                lastMessage: thread.messages.last?.textContent,
                 unreadCount: 0
             ))
         }
@@ -139,173 +159,102 @@ struct SidebarView: View {
     }
 
     var body: some View {
-        List(selection: $appState.selectedSidebarItem) {
-            // Open Space - Primary entry point (no section header)
-            ForEach(SidebarItem.primaryItems) { item in
-                sidebarRow(for: item)
-                    .font(.headline)
-            }
+        VStack(spacing: 0) {
+            // Header in title bar area - sits alongside traffic lights
+            sidebarHeader
 
-            // Spaces with expandable channels
-            Section("Spaces") {
-                ForEach(displaySpaces) { space in
-                    SpaceSidebarRow(space: space)
+            // Main sidebar list
+            List(selection: $appState.selectedSidebarItem) {
+                // Open Space - Primary entry point (no section header)
+                ForEach(SidebarItem.primaryItems) { item in
+                    sidebarRow(for: item)
+                        .font(.headline)
                 }
 
-                // Add new space - with menu for options
-                HStack(spacing: 8) {
-                    Button(action: { appState.showNewSpaceSheet = true }) {
-                        Label("Add Space", systemImage: "plus.circle")
-                            .foregroundStyle(.secondary)
+                // Spaces with expandable channels
+                Section("Spaces") {
+                    ForEach(displaySpaces) { space in
+                        SpaceSidebarRow(space: space)
                     }
-                    .buttonStyle(.plain)
 
-                    Menu {
+                    // Add new space - with menu for options
+                    HStack(spacing: 8) {
                         Button(action: { appState.showNewSpaceSheet = true }) {
-                            Label("New Space", systemImage: "folder.badge.plus")
+                            Label("Add Space", systemImage: "plus.circle")
+                                .foregroundStyle(.secondary)
                         }
-                        Button(action: { addExternalFolder() }) {
-                            Label("Add External Folder", systemImage: "folder.badge.gearshape")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .foregroundStyle(.tertiary)
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .frame(width: 20)
-                }
-            }
-
-            // Direct Messages (Agent chats - Slack-like)
-            Section("Direct Messages") {
-                // Show recent agent conversations
-                ForEach(recentAgentChats.prefix(5)) { agent in
-                    AgentDMRow(agent: agent)
-                }
-
-                // "View all" link to Agents roster
-                Button(action: { appState.selectedSidebarItem = .agents }) {
-                    Label("View all agents", systemImage: "ellipsis.circle")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-
-            // Activity section
-            Section {
-                sidebarRow(for: .tasks)
-
-                // Reviews only shown when there are pending items
-                let pendingCount = appState.pendingApprovals.count + appState.pendingDecisionCount
-                if pendingCount > 0 {
-                    sidebarRow(for: .reviews)
-                        .badge(pendingCount)
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .toolbar(removing: .sidebarToggle) // Remove default toggle
-        .safeAreaInset(edge: .top) {
-            VStack(spacing: 0) {
-                // Sidebar collapse button - aligned with traffic light buttons
-                // Traffic lights are at ~(7, 6) from top-left, we position below them
-                HStack {
-                    Button(action: toggleSidebar) {
-                        Image(systemName: "sidebar.left")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Collapse Sidebar")
-
-                    Spacer()
-                }
-                .padding(.leading, 7) // Align with traffic light X position
-                .padding(.top, 4)
-                .padding(.bottom, 8)
-
-                // Main header with title and actions
-                HStack(spacing: 12) {
-                    // Stylized Envoy logo
-                    Image("EnvoyLogo")
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
-                        .frame(width: 36, height: 36)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: 6) {
-                            Text("Envoy")
-                                .font(.headline)
-
-                            // Demo mode indicator
-                            if DemoDataManager.shared.isDemoMode {
-                                Text("DEMO")
-                                    .font(.caption2.weight(.bold))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.orange, in: Capsule())
-                                    .foregroundStyle(.white)
-                            }
-                        }
-                        Text("\(itemCount) items")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-
-                    HStack(spacing: 12) {
-                        ServerStatusButton()
+                        .buttonStyle(.plain)
 
                         Menu {
-                            Button(action: { appState.showNewDocumentSheet = true }) {
-                                Label("New Document", systemImage: "doc.badge.plus")
+                            Button(action: { appState.showNewSpaceSheet = true }) {
+                                Label("New Space", systemImage: "folder.badge.plus")
                             }
-                            Button(action: { appState.showNewConversationSheet = true }) {
-                                Label("New Conversation", systemImage: "bubble.left.and.bubble.right")
-                            }
-                            Button(action: { appState.showNewCoachingSheet = true }) {
-                                Label("New Coaching Session", systemImage: "figure.mind.and.body")
-                            }
-                            Divider()
-                            Button(action: { appState.showNewTaskSheet = true }) {
-                                Label("New Task", systemImage: "plus.circle")
+                            Button(action: { addExternalFolder() }) {
+                                Label("Add External Folder", systemImage: "folder.badge.gearshape")
                             }
                         } label: {
-                            Image(systemName: "square.and.pencil")
-                                .font(.title3)
+                            Image(systemName: "ellipsis.circle")
+                                .foregroundStyle(.tertiary)
                         }
                         .menuStyle(.borderlessButton)
                         .menuIndicator(.hidden)
+                        .frame(width: 20)
                     }
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 10)
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            VStack(spacing: 8) {
-                // Model status bar
-                ModelStatusBar()
 
-                // Server status bar
-                HStack(spacing: 12) {
-                    ServerStatusBar()
+                // Direct Messages (Agent chats - Slack-like)
+                Section("Direct Messages") {
+                    // Show recent agent conversations
+                    ForEach(recentAgentChats.prefix(5)) { agent in
+                        AgentDMRow(agent: agent)
+                    }
 
-                    Spacer()
-
-                    Button(action: { appState.selectedSidebarItem = .settings }) {
-                        Image(systemName: "gearshape")
+                    // "View all" link to Agents roster
+                    Button(action: { appState.selectedSidebarItem = .agents }) {
+                        Label("View all agents", systemImage: "ellipsis.circle")
                             .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Settings")
                 }
-                .padding(.trailing, 12)
+
+                // Activity section
+                Section {
+                    sidebarRow(for: .tasks)
+
+                    // Reviews only shown when there are pending items
+                    let pendingCount = appState.pendingApprovals.count + appState.pendingDecisionCount
+                    if pendingCount > 0 {
+                        sidebarRow(for: .reviews)
+                            .badge(pendingCount)
+                    }
+                }
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 8) {
+                    // Model status bar
+                    ModelStatusBar()
+
+                    // Server status bar
+                    HStack(spacing: 12) {
+                        ServerStatusBar()
+
+                        Spacer()
+
+                        Button(action: { appState.selectedSidebarItem = .settings }) {
+                            Image(systemName: "gearshape")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Settings")
+                    }
+                    .padding(.trailing, 12)
+                }
             }
         }
+        .background(Color(nsColor: .windowBackgroundColor))
+        .toolbar(removing: .sidebarToggle) // Remove default toggle
         .onChange(of: appState.selectedSidebarItem) { _, newItem in
             // Clear space selection when switching to non-space sidebar items
             if newItem != .spaces {
@@ -315,7 +264,39 @@ struct SidebarView: View {
     }
 
     private var itemCount: Int {
-        appState.workspace.documents.count + appState.workspace.conversations.count
+        appState.workspace.documents.count + appState.workspace.threads.count
+    }
+
+    /// Header that sits in the title bar area, aligned with traffic lights
+    private var sidebarHeader: some View {
+        HStack(spacing: 10) {
+            // Leave space for traffic lights (approximately 70pt)
+            Spacer()
+                .frame(width: 52)
+
+            // Sidebar toggle button - right-aligned in header
+            Button(action: toggleSidebar) {
+                Image(systemName: "sidebar.left")
+                    .font(.system(size: 14))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Toggle Sidebar")
+
+            Spacer()
+
+            // Demo mode indicator (small, subtle)
+            if DemoDataManager.shared.isDemoMode {
+                Text("DEMO")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.orange, in: Capsule())
+                    .foregroundStyle(.white)
+            }
+        }
+        .frame(height: 28)
+        .padding(.horizontal, 8)
     }
 
     private func sidebarRow(for item: SidebarItem) -> some View {
@@ -358,7 +339,7 @@ struct SidebarView: View {
     }
 }
 
-// MARK: - Space Sidebar Row (Expandable with Channels)
+// MARK: - Space Sidebar Row (Simplified - no expand/collapse)
 
 struct SpaceSidebarRow: View {
     let space: SpaceViewModel
@@ -366,10 +347,6 @@ struct SpaceSidebarRow: View {
     @State private var showSettings = false
     @State private var showInviteAgent = false
     @State private var isHovered = false
-
-    private var isExpanded: Bool {
-        appState.expandedSpaceIds.contains(space.id)
-    }
 
     private var isSelected: Bool {
         appState.selectedSpaceId?.rawValue == space.id
@@ -380,106 +357,80 @@ struct SpaceSidebarRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Space row header
-            HStack(spacing: 8) {
-                // Expand/collapse chevron
-                Button(action: toggleExpanded) {
-                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+        HStack(spacing: 8) {
+            // Space icon
+            RoundedRectangle(cornerRadius: 6)
+                .fill(space.color.gradient)
+                .frame(width: 24, height: 24)
+                .overlay {
+                    Image(systemName: space.icon)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 16)
+                        .foregroundStyle(.white)
                 }
-                .buttonStyle(.plain)
 
-                // Space icon
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(space.color.gradient)
-                    .frame(width: 20, height: 20)
-                    .overlay {
-                        Image(systemName: space.icon)
-                            .font(.caption2)
-                            .foregroundStyle(.white)
+            Text(space.name)
+                .fontWeight(isSelected ? .semibold : .regular)
+                .lineLimit(1)
+
+            Spacer()
+
+            // Settings menu (appears on hover)
+            if isHovered {
+                Menu {
+                    Button(action: { showSettings = true }) {
+                        Label("Space Settings", systemImage: "gearshape")
                     }
-
-                Text(space.name)
-                    .lineLimit(1)
-
-                Spacer()
-
-                // Settings menu (appears on hover)
-                if isHovered {
-                    Menu {
-                        Button(action: { showSettings = true }) {
-                            Label("Space Settings", systemImage: "gearshape")
-                        }
-                        Button(action: { /* TODO: Add channel */ }) {
-                            Label("Add Channel", systemImage: "plus.bubble")
-                        }
-                        Button(action: { showInviteAgent = true }) {
-                            Label("Invite Agent", systemImage: "person.badge.plus")
-                        }
+                    Button(action: { showInviteAgent = true }) {
+                        Label("Invite Agent", systemImage: "person.badge.plus")
+                    }
+                    if space.path != nil {
                         Divider()
                         Button(action: { showInFinder() }) {
                             Label("Show in Finder", systemImage: "folder")
                         }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20, height: 20)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(width: 20, height: 20)
                 }
-
-                // Unread badge
-                if totalUnread > 0 {
-                    Text("\(totalUnread)")
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.accentColor.opacity(0.2), in: Capsule())
-                        .foregroundStyle(.primary)
-                }
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                selectSpace()
-            }
-            .onHover { hovering in
-                isHovered = hovering
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
             }
 
-            // Expanded channels
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 2) {
-                    if space.channels.isEmpty {
-                        Text("No channels")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .padding(.vertical, 4)
-                    } else {
-                        ForEach(space.channels) { channel in
-                            ChannelSidebarRow(channel: channel, spaceId: space.id)
-                        }
-                    }
-                }
-                .padding(.leading, 28)
-                .padding(.top, 4)
+            // Unread badge
+            if totalUnread > 0 {
+                Text("\(totalUnread)")
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.2), in: Capsule())
+                    .foregroundStyle(.primary)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(isSelected ? Color.accentColor.opacity(0.15) : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            selectSpace()
+        }
+        .onHover { hovering in
+            isHovered = hovering
+        }
         .contextMenu {
             Button(action: { showSettings = true }) {
                 Label("Space Settings", systemImage: "gearshape")
             }
-            Button(action: { /* TODO: Add channel */ }) {
-                Label("Add Channel", systemImage: "plus.bubble")
+            Button(action: { showInviteAgent = true }) {
+                Label("Invite Agent", systemImage: "person.badge.plus")
             }
-            Divider()
-            Button(action: { showInFinder() }) {
-                Label("Show in Finder", systemImage: "folder")
+            if space.path != nil {
+                Divider()
+                Button(action: { showInFinder() }) {
+                    Label("Show in Finder", systemImage: "folder")
+                }
             }
         }
         .sheet(isPresented: $showSettings) {
@@ -495,22 +446,10 @@ struct SpaceSidebarRow: View {
         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: path)
     }
 
-    private func toggleExpanded() {
-        withAnimation(.easeInOut(duration: 0.15)) {
-            if isExpanded {
-                appState.expandedSpaceIds.remove(space.id)
-            } else {
-                appState.expandedSpaceIds.insert(space.id)
-            }
-        }
-    }
-
     private func selectSpace() {
         print("🎯 Selecting space: \(space.name) with id: \(space.id)")
         appState.selectedSpaceId = SpaceID(space.id)
         appState.selectedChannelId = nil
-        // Clear sidebar selection so DetailView shows SpaceDetailView
-        // The List selection doesn't apply to spaces - they're custom rows
     }
 }
 
@@ -663,11 +602,11 @@ struct SpaceSettingsSheet: View {
                 Spacer()
 
                 Button("Save Changes") {
-                    // TODO: Save space settings via SpaceManager
+                    saveSpaceSettings()
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(spaceName.isEmpty && selectedColor == space.color && selectedIcon == space.icon)
+                .disabled(spaceName.isEmpty)
             }
             .padding()
         }
@@ -676,6 +615,15 @@ struct SpaceSettingsSheet: View {
             spaceName = space.name
             selectedColor = space.color
             selectedIcon = space.icon
+        }
+    }
+
+    private func saveSpaceSettings() {
+        // Find and update the space in appState
+        if let index = appState.spaces.firstIndex(where: { $0.id == space.id }) {
+            appState.spaces[index].name = spaceName
+            appState.spaces[index].color = selectedColor
+            appState.spaces[index].icon = selectedIcon
         }
     }
 }
@@ -750,30 +698,28 @@ struct InviteAgentSheet: View {
     }
 
     private func inviteAgent(_ agent: RegisteredAgent) {
-        // Create a new DM conversation with this agent
-        var conversation = Conversation(
-            title: "Invite: \(agent.name) → \(space.name)",
-            messages: [
-                // Agent's introduction message
-                ConversationMessage(
-                    role: .assistant,
-                    content: """
-                    Hi! I'm \(agent.name), and I've been invited to join **\(space.name)**.
+        // Create a new DM thread with this agent
+        let introMessage = AgentKit.ThreadMessage.assistant(
+            """
+            Hi! I'm \(agent.name), and I've been invited to join **\(space.name)**.
 
-                    Before I get started, I'd like to ask: would you like me to **review existing threads** in this space? This would help me understand the context and contribute more effectively.
+            Before I get started, I'd like to ask: would you like me to **review existing threads** in this space? This would help me understand the context and contribute more effectively.
 
-                    Please let me know:
-                    - **Yes** - Review past threads and provide insights
-                    - **No** - Start fresh with new conversations only
-                    """
-                )
-            ],
+            Please let me know:
+            - **Yes** - Review past threads and provide insights
+            - **No** - Start fresh with new threads only
+            """,
             agentName: agent.name
         )
-        conversation.spaceId = SpaceID(space.id)
+
+        var newThread = AgentKit.Thread(
+            title: "Invite: \(agent.name) → \(space.name)",
+            messages: [introMessage],
+            container: .space(space.id)
+        )
 
         // Add to workspace
-        appState.workspace.conversations.insert(conversation, at: 0)
+        appState.workspace.threads.insert(newThread, at: 0)
 
         // Create a decision card for the retroactive review
         let decisionCard = DecisionCard(
@@ -781,21 +727,21 @@ struct InviteAgentSheet: View {
             description: """
             \(agent.name) has been invited to \(space.name).
 
-            If approved, the agent will analyze existing threads to understand context and may provide insights or suggestions based on past conversations.
+            If approved, the agent will analyze existing threads to understand context and may provide insights or suggestions based on past threads.
             """,
             status: .pending,
             sourceType: .agentAction,
-            sourceId: conversation.id.rawValue,
+            sourceId: newThread.id.rawValue,
             requestedBy: agent.name
         )
 
         // Add to pending decisions
         appState.decisionCards.append(decisionCard)
 
-        // Navigate to the conversation
+        // Navigate to the thread
         appState.selectedAgentFilter = agent.name
-        appState.selectedConversationId = conversation.id
-        appState.selectedSidebarItem = .conversations
+        appState.selectedThreadId = newThread.id
+        appState.selectedSidebarItem = .threads
 
         dismiss()
     }
@@ -872,6 +818,8 @@ struct ChannelSidebarRow: View {
     let spaceId: String
     @EnvironmentObject private var appState: AppState
     @State private var showMembers = false
+    @State private var isMuted = false
+    @State private var showSettings = false
 
     private var isSelected: Bool {
         appState.selectedSpaceId?.rawValue == spaceId &&
@@ -911,19 +859,28 @@ struct ChannelSidebarRow: View {
             Button(action: { showMembers = true }) {
                 Label("View Members", systemImage: "person.2")
             }
-            Button(action: { /* TODO */ }) {
+            Button(action: { addMemberToChannel() }) {
                 Label("Add Member", systemImage: "person.badge.plus")
             }
             Divider()
-            Button(action: { /* TODO */ }) {
+            Button(action: { showSettings = true }) {
                 Label("Channel Settings", systemImage: "gearshape")
             }
-            Button(action: { /* TODO */ }) {
-                Label("Mute Channel", systemImage: "bell.slash")
+            Button(action: { toggleMute() }) {
+                Label(isMuted ? "Unmute Channel" : "Mute Channel",
+                      systemImage: isMuted ? "bell" : "bell.slash")
             }
         }
         .sheet(isPresented: $showMembers) {
             ChannelMembersSheet(channel: channel, spaceId: spaceId)
+        }
+        .sheet(isPresented: $showSettings) {
+            ChannelSettingsSheet(channel: channel, spaceId: spaceId)
+        }
+        .onAppear {
+            // Load mute state from UserDefaults
+            let key = "channelMuted_\(spaceId)_\(channel.id)"
+            isMuted = UserDefaults.standard.bool(forKey: key)
         }
     }
 
@@ -931,6 +888,99 @@ struct ChannelSidebarRow: View {
         appState.selectedSpaceId = SpaceID(spaceId)
         appState.selectedChannelId = channel.id
         // Channel selection is separate from sidebar item selection
+    }
+
+    private func addMemberToChannel() {
+        // Navigate to agent recruitment to add a member to this channel
+        appState.selectedSpaceId = SpaceID(spaceId)
+        appState.selectedChannelId = channel.id
+        appState.showAgentRecruitment = true
+    }
+
+    private func toggleMute() {
+        isMuted.toggle()
+        // Persist mute state to UserDefaults
+        let key = "channelMuted_\(spaceId)_\(channel.id)"
+        UserDefaults.standard.set(isMuted, forKey: key)
+    }
+}
+
+// MARK: - Channel Settings Sheet
+
+struct ChannelSettingsSheet: View {
+    let channel: ChannelViewModel
+    let spaceId: String
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject private var appState: AppState
+    @State private var channelName: String = ""
+    @State private var channelDescription: String = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Text("Channel Settings")
+                    .font(.headline)
+                Spacer()
+                Button("Done") { dismiss() }
+                    .buttonStyle(.bordered)
+            }
+            .padding()
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Channel name
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Channel Name")
+                            .font(.subheadline.weight(.medium))
+                        TextField("Channel name", text: $channelName)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    // Channel description
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Description")
+                            .font(.subheadline.weight(.medium))
+                        TextField("What's this channel about?", text: $channelDescription)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                    Divider()
+
+                    // Channel info
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Channel Info")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.secondary)
+
+                        HStack {
+                            Image(systemName: channel.icon)
+                                .foregroundStyle(.secondary)
+                            Text("Icon: \(channel.icon)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        HStack {
+                            Image(systemName: "number")
+                                .foregroundStyle(.secondary)
+                            Text("ID: \(channel.id)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    Spacer()
+                }
+                .padding()
+            }
+        }
+        .frame(width: 400, height: 350)
+        .onAppear {
+            channelName = channel.name
+        }
     }
 }
 
@@ -1707,8 +1757,8 @@ struct DetailView: View {
                     SpacesListView()
                 case .documents:
                     DocumentsView()
-                case .conversations:
-                    ConversationsView()
+                case .threads:
+                    ThreadsView()
                 case .tasks:
                     TasksView()
                 case .reviews:
@@ -1998,21 +2048,20 @@ struct AgentDMRow: View {
     private func startAgentChat() {
         // Set agent filter to show all threads with this agent
         appState.selectedAgentFilter = agent.name
-        appState.selectedSidebarItem = .conversations
+        appState.selectedSidebarItem = .threads
 
-        // If there's an existing conversation with this agent, select it
-        if let conv = appState.workspace.conversations.first(where: { $0.agentName == agent.name }) {
-            appState.selectedConversationId = conv.id
+        // If there's an existing thread with this agent, select it
+        if let existing = appState.workspace.threads.first(where: { $0.container.agentName == agent.name }) {
+            appState.selectedThreadId = existing.id
         } else {
-            // Create new conversation and select it
-            let newConv = Conversation(
+            // Create new thread and select it
+            let newThread = AgentKit.Thread(
                 title: "Chat with \(agent.name)",
-                messages: [],
-                agentName: agent.name
+                container: .agent(agent.name)
             )
-            appState.workspace.conversations.insert(newConv, at: 0)
-            appState.selectedConversationId = newConv.id
-            appState.selectedSidebarItem = .conversations
+            appState.workspace.threads.insert(newThread, at: 0)
+            appState.selectedThreadId = newThread.id
+            appState.selectedSidebarItem = .threads
         }
     }
 }

@@ -4,7 +4,7 @@ import Foundation
 
 /// A workspace is the shared context container across all Goldeneye pillars.
 ///
-/// Documents, conversations, and coaching sessions all exist within a workspace,
+/// Documents, threads, and coaching sessions all exist within a workspace,
 /// enabling agents to have full context across different interaction modes.
 public actor Workspace: Identifiable {
     public let id: WorkspaceID
@@ -12,7 +12,7 @@ public actor Workspace: Identifiable {
     public let createdAt: Date
 
     private var _documents: [DocumentID: Document] = [:]
-    private var _conversations: [ConversationID: Conversation] = [:]
+    private var _threads: [ThreadID: Thread] = [:]
     private var _coachingSessions: [CoachingSessionID: CoachingSession] = [:]
     private var _folders: [FolderID: Folder] = [:]
     private var _tags: [TagID: Tag] = [:]
@@ -45,22 +45,22 @@ public actor Workspace: Identifiable {
         _documents.removeValue(forKey: id)
     }
 
-    // MARK: - Conversations
+    // MARK: - Threads
 
-    public var conversations: [Conversation] {
-        Array(_conversations.values).sorted { $0.updatedAt > $1.updatedAt }
+    public var threads: [Thread] {
+        Array(_threads.values).sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    public func conversation(id: ConversationID) -> Conversation? {
-        _conversations[id]
+    public func thread(id: ThreadID) -> Thread? {
+        _threads[id]
     }
 
-    public func addConversation(_ conversation: Conversation) {
-        _conversations[conversation.id] = conversation
+    public func addThread(_ thread: Thread) {
+        _threads[thread.id] = thread
     }
 
-    public func updateConversation(_ conversation: Conversation) {
-        _conversations[conversation.id] = conversation
+    public func updateThread(_ thread: Thread) {
+        _threads[thread.id] = thread
     }
 
     // MARK: - Coaching Sessions

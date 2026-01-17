@@ -271,7 +271,7 @@ struct CoachingSessionDetailView: View {
                 ScrollView {
                     LazyVStack(spacing: 16) {
                         ForEach(session.messages) { message in
-                            ConversationMessageBubble(message: message)
+                            ThreadMessageBubble(message: message)
                         }
 
                         if isLoading {
@@ -482,24 +482,52 @@ struct CoachingSessionDetailView: View {
     private func sendMessage() {
         guard !newMessage.isEmpty else { return }
 
-        let userMessage = ConversationMessage(role: .user, content: newMessage)
+        let userMessage = AgentKit.ThreadMessage.user(newMessage)
 
         if let index = appState.workspace.coachingSessions.firstIndex(where: { $0.id == session.id }) {
             appState.workspace.coachingSessions[index].messages.append(userMessage)
             appState.workspace.coachingSessions[index].updatedAt = Date()
         }
 
+        let messageContent = newMessage
         newMessage = ""
         isLoading = true
 
-        // Simulate coach response
+        // Get real coaching response from LLM
         Task {
-            try? await Task.sleep(for: .seconds(1))
+            // Build context from previous messages
+            let previousMessages = session.messages.map { msg in
+                "\(msg.role == .user ? "User" : "Coach"): \(msg.textContent)"
+            }.joined(separator: "\n\n")
 
-            let response = ConversationMessage(
-                role: .assistant,
-                content: "This is a placeholder coaching response. In the full implementation, this would come from a specialized coaching agent for the \(session.domain.displayName) domain."
-            )
+            let systemPrompt = """
+            You are a supportive and insightful \(session.domain.displayName) coach. \
+            Your goal is to help the user achieve: \(session.goal ?? "personal growth in \(session.domain.displayName.lowercased())")
+
+            Be empathetic, ask thoughtful questions, and provide actionable advice. \
+            Keep responses focused and under 200 words unless more detail is needed.
+            """
+
+            let prompt = """
+            \(systemPrompt)
+
+            Previous conversation:
+            \(previousMessages.isEmpty ? "(This is the start of the conversation)" : previousMessages)
+
+            User: \(messageContent)
+
+            Coach:
+            """
+
+            var responseContent: String
+            if let response = await appState.sendAgentMessage(prompt) {
+                responseContent = response
+            } else {
+                // Fallback if no LLM available
+                responseContent = "I'd love to help you with your \(session.domain.displayName.lowercased()) goals. Could you tell me more about what specific aspect you'd like to focus on today?"
+            }
+
+            let response = AgentKit.ThreadMessage.assistant(responseContent)
 
             if let index = appState.workspace.coachingSessions.firstIndex(where: { $0.id == session.id }) {
                 appState.workspace.coachingSessions[index].messages.append(response)

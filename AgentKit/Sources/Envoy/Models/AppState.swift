@@ -18,13 +18,14 @@ public final class AppState: ObservableObject {
     @Published var showNewTaskSheet = false
     @Published var showConnectSheet = false
     @Published var showNewDocumentSheet = false
-    @Published var showNewConversationSheet = false
+    @Published var showNewThreadSheet = false
     @Published var showNewCoachingSheet = false
     @Published var showNewSpaceSheet = false
     @Published var showCommandPalette = false
     @Published var showAgentRecruitment = false
     @Published var showAgentBuilder = false
     @Published var showModelPicker = false
+    @Published var showOnboarding = false
 
     /// Target settings category to navigate to (reset after navigation)
     @Published var targetSettingsCategory: String?
@@ -52,11 +53,15 @@ public final class AppState: ObservableObject {
     /// Native integrations (Slack, Quip, etc.)
     let nativeIntegrations: NativeIntegrationManager
 
-    /// Conversation persistence store
-    let conversationStore: ConversationStore?
+    /// Thread persistence store (unified thread model)
+    let threadStore: ThreadStore?
 
     /// Memory store - RAG-based retrieval across all content
     var memoryStore: MemoryStore?
+
+    /// AgentKit bootstrap - initialized with proper providers
+    /// This provides real LLM providers (AFM, Ollama, etc.) to all agents
+    private(set) var agentKit: AgentKitBootstrap?
 
     #if os(macOS)
     /// Content sync service - syncs Reading List and Shared with You
@@ -102,7 +107,7 @@ public final class AppState: ObservableObject {
     // MARK: - Selected Items
 
     @Published var selectedDocumentId: DocumentID?
-    @Published var selectedConversationId: ConversationID?
+    @Published var selectedThreadId: AgentKit.ThreadID?
     @Published var selectedCoachingSessionId: CoachingSessionID?
 
     /// Selected agent filter for DM-style thread filtering
@@ -214,10 +219,10 @@ public final class AppState: ObservableObject {
         // Initialize Native Integrations
         self.nativeIntegrations = NativeIntegrationManager()
 
-        // Initialize Conversation Store (must happen before any self methods)
-        self.conversationStore = try? ConversationStore()
-        if conversationStore == nil {
-            print("⚠️ Failed to initialize ConversationStore")
+        // Initialize Thread Store (unified thread model)
+        self.threadStore = try? ThreadStore()
+        if threadStore == nil {
+            print("⚠️ Failed to initialize ThreadStore")
         }
 
         // Initialize local agent using settings
@@ -225,6 +230,26 @@ public final class AppState: ObservableObject {
 
         // Load content in background
         Task {
+            // Initialize AgentKit with real providers (AFM first, then Ollama)
+            do {
+                let workingDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+                    .appendingPathComponent("Envoy", isDirectory: true)
+                    .appendingPathComponent("AgentKit", isDirectory: true)
+
+                let kit = try await AgentKitBootstrap.initialize(
+                    workingDirectory: workingDir,
+                    config: .default
+                )
+                await MainActor.run {
+                    self.agentKit = kit
+                }
+
+                let isReady = await kit.isReady()
+                print("✅ AgentKit initialized (ready: \(isReady))")
+            } catch {
+                print("⚠️ Failed to initialize AgentKit: \(error)")
+            }
+
             // Initialize memory store properly
             do {
                 let store = try await MemoryStore()
@@ -247,7 +272,7 @@ public final class AppState: ObservableObject {
 
             await loadSpaces()
             await loadDocuments()
-            await loadConversations()
+            await loadThreads()
             await loadRegisteredAgents()
 
             // Initialize the About Me space (creates if needed)
@@ -327,7 +352,20 @@ public final class AppState: ObservableObject {
 
     // MARK: - Native Integrations
 
-    /// Configure Slack integration with a bot token
+    /// Configure Slack integration with bot and/or user tokens
+    public func configureSlack(botToken: String? = nil, userToken: String? = nil) async {
+        await nativeIntegrations.configureSlack(botToken: botToken, userToken: userToken)
+        let hasBot = !(botToken?.isEmpty ?? true)
+        let hasUser = !(userToken?.isEmpty ?? true)
+        if hasBot || hasUser {
+            let tokens = [hasBot ? "bot" : nil, hasUser ? "user" : nil].compactMap { $0 }.joined(separator: "+")
+            print("✅ Slack integration configured (\(tokens) tokens)")
+        } else {
+            print("✅ Slack integration disabled")
+        }
+    }
+
+    /// Legacy: Configure Slack with single token
     public func configureSlack(token: String) async {
         await nativeIntegrations.configureSlack(token: token)
         print("✅ Slack integration \(token.isEmpty ? "disabled" : "configured")")
@@ -337,6 +375,49 @@ public final class AppState: ObservableObject {
     public func configureQuip(token: String) async {
         await nativeIntegrations.configureQuip(token: token)
         print("✅ Quip integration \(token.isEmpty ? "disabled" : "configured")")
+    }
+
+    // MARK: - Apple Integrations
+
+    /// Configure Apple Reminders integration
+    public func configureReminders(enabled: Bool) async {
+        await nativeIntegrations.configureReminders(enabled: enabled)
+        print("✅ Reminders integration \(enabled ? "enabled" : "disabled")")
+    }
+
+    /// Configure Apple Notes integration
+    public func configureNotes(enabled: Bool) async {
+        await nativeIntegrations.configureNotes(enabled: enabled)
+        print("✅ Notes integration \(enabled ? "enabled" : "disabled")")
+    }
+
+    /// Configure Apple Mail integration
+    public func configureMail(enabled: Bool) async {
+        await nativeIntegrations.configureMail(enabled: enabled)
+        print("✅ Mail integration \(enabled ? "enabled" : "disabled")")
+    }
+
+    /// Configure Apple Messages integration
+    public func configureMessages(enabled: Bool) async {
+        await nativeIntegrations.configureMessages(enabled: enabled)
+        print("✅ Messages integration \(enabled ? "enabled" : "disabled")")
+    }
+
+    /// Configure all Apple integrations at once
+    public func configureAppleIntegrations(
+        reminders: Bool = true,
+        notes: Bool = true,
+        mail: Bool = true,
+        messages: Bool = true
+    ) async {
+        await nativeIntegrations.configureAppleIntegrations(
+            reminders: reminders,
+            notes: notes,
+            mail: mail,
+            messages: messages
+        )
+        let enabled = [reminders ? "Reminders" : nil, notes ? "Notes" : nil, mail ? "Mail" : nil, messages ? "Messages" : nil].compactMap { $0 }
+        print("✅ Apple integrations configured: \(enabled.isEmpty ? "none" : enabled.joined(separator: ", "))")
     }
 
     /// Get all available tools from native integrations
@@ -513,25 +594,25 @@ public final class AppState: ObservableObject {
         }
     }
 
-    // MARK: - Conversation Messaging
+    // MARK: - Thread Messaging
 
-    /// Send a message in a conversation via A2A protocol
+    /// Send a message in a thread via A2A protocol
     /// Returns an async stream of text deltas for real-time display
-    func sendConversationMessage(
-        conversationId: ConversationID,
+    func sendThreadMessage(
+        threadId: AgentKit.ThreadID,
         content: String
     ) async throws -> AsyncThrowingStream<String, Error> {
         guard let client = a2aClient else {
-            throw ConversationError.notConnected
+            throw ThreadError.notConnected
         }
 
-        // Find the conversation
-        guard let index = workspace.conversations.firstIndex(where: { $0.id == conversationId }) else {
-            throw ConversationError.conversationNotFound
+        // Find the thread
+        guard let index = workspace.threads.firstIndex(where: { $0.id == threadId }) else {
+            throw ThreadError.threadNotFound
         }
 
         // Create A2A message with optional context ID for continuity
-        let contextId = workspace.conversations[index].contextId
+        let contextId = workspace.threads[index].contextId
         let message = A2AMessage(
             contextId: contextId,
             role: .user,
@@ -539,7 +620,7 @@ public final class AppState: ObservableObject {
         )
 
         // Capture values needed for the stream
-        let conversationIndex = index
+        let threadIndex = index
         let agentName = localAgent?.card?.name
 
         // Return a stream that handles both response and state updates
@@ -569,8 +650,8 @@ public final class AppState: ObservableObject {
 
                         case .task(let task):
                             // Store context ID for future continuity
-                            if self.workspace.conversations[conversationIndex].contextId == nil {
-                                self.workspace.conversations[conversationIndex].contextId = task.contextId
+                            if self.workspace.threads[threadIndex].contextId == nil {
+                                self.workspace.threads[threadIndex].contextId = task.contextId
                             }
 
                             // Check for input required (approvals)
@@ -589,21 +670,16 @@ public final class AppState: ObservableObject {
                         }
                     }
 
-                    // Add the assistant response to local conversation
+                    // Add the assistant response to local thread
                     if !fullResponse.isEmpty {
-                        let assistantMessage = ConversationMessage(
-                            role: .assistant,
-                            content: fullResponse,
-                            metadata: MessageMetadata(
-                                model: agentName,
-                                provider: "AgentKit"
-                            )
+                        let assistantMessage = AgentKit.ThreadMessage.assistant(
+                            fullResponse,
+                            agentName: agentName
                         )
-                        self.workspace.conversations[conversationIndex].messages.append(assistantMessage)
-                        self.workspace.conversations[conversationIndex].updatedAt = Date()
+                        self.workspace.threads[threadIndex].addMessage(assistantMessage)
 
-                        // Persist the updated conversation
-                        await self.saveConversation(self.workspace.conversations[conversationIndex])
+                        // Persist the updated thread
+                        await self.saveThread(self.workspace.threads[threadIndex])
                     }
 
                     continuation.finish()
@@ -615,21 +691,21 @@ public final class AppState: ObservableObject {
     }
 
     /// Non-streaming version for simpler use cases
-    func sendConversationMessageBlocking(
-        conversationId: ConversationID,
+    func sendThreadMessageBlocking(
+        threadId: AgentKit.ThreadID,
         content: String
     ) async throws -> String {
         guard let client = a2aClient else {
-            throw ConversationError.notConnected
+            throw ThreadError.notConnected
         }
 
-        // Find the conversation
-        guard let index = workspace.conversations.firstIndex(where: { $0.id == conversationId }) else {
-            throw ConversationError.conversationNotFound
+        // Find the thread
+        guard let index = workspace.threads.firstIndex(where: { $0.id == threadId }) else {
+            throw ThreadError.threadNotFound
         }
 
         // Create A2A message
-        let contextId = workspace.conversations[index].contextId
+        let contextId = workspace.threads[index].contextId
         let message = A2AMessage(
             contextId: contextId,
             role: .user,
@@ -640,8 +716,8 @@ public final class AppState: ObservableObject {
         let task = try await client.sendMessage(message, contextId: contextId, blocking: true)
 
         // Store context ID for future messages
-        if workspace.conversations[index].contextId == nil {
-            workspace.conversations[index].contextId = task.contextId
+        if workspace.threads[index].contextId == nil {
+            workspace.threads[index].contextId = task.contextId
         }
 
         // Extract response text from task history
@@ -650,20 +726,15 @@ public final class AppState: ObservableObject {
            case .text(let textPart) = lastMessage.parts.first {
             let response = textPart.text
 
-            // Add to local conversation
-            let assistantMessage = ConversationMessage(
-                role: .assistant,
-                content: response,
-                metadata: MessageMetadata(
-                    model: localAgent?.card?.name,
-                    provider: "AgentKit"
-                )
+            // Add to local thread
+            let assistantMessage = AgentKit.ThreadMessage.assistant(
+                response,
+                agentName: localAgent?.card?.name
             )
-            workspace.conversations[index].messages.append(assistantMessage)
-            workspace.conversations[index].updatedAt = Date()
+            workspace.threads[index].addMessage(assistantMessage)
 
-            // Persist the updated conversation
-            await saveConversation(workspace.conversations[index])
+            // Persist the updated thread
+            await saveThread(workspace.threads[index])
 
             return response
         }
@@ -671,7 +742,7 @@ public final class AppState: ObservableObject {
         return ""
     }
 
-    /// Check if A2A client is connected and ready for conversations
+    /// Check if A2A client is connected and ready for threads
     var isAgentConnected: Bool {
         a2aClient != nil && localAgent?.status.isConnected == true
     }
@@ -773,75 +844,155 @@ public final class AppState: ObservableObject {
 
     // MARK: - Conversation Storage
 
-    /// Load conversations from persistent storage
-    func loadConversations() async {
-        guard let store = conversationStore else {
-            print("⚠️ ConversationStore not available")
+    // MARK: - Thread Storage (Unified Model)
+
+    /// Load threads from persistent storage (replaces loadConversations)
+    func loadThreads() async {
+        guard let store = threadStore else {
+            print("⚠️ ThreadStore not available")
             return
         }
 
         do {
-            let conversations = try await store.loadAll()
-            workspace.conversations = conversations
-            print("✅ Loaded \(conversations.count) conversations")
+            // Load all threads
+            let threads = try await store.allThreads()
+            workspace.threads = threads
+            print("✅ Loaded \(threads.count) threads")
+
+            // Index all loaded threads for semantic search
+            for thread in threads {
+                await indexThread(thread)
+            }
+            print("✅ Indexed \(threads.count) threads for search")
         } catch {
-            print("⚠️ Failed to load conversations: \(error)")
+            print("⚠️ Failed to load threads: \(error)")
         }
     }
 
-    /// Save a conversation to persistent storage
-    func saveConversation(_ conversation: Conversation) async {
-        guard let store = conversationStore else { return }
+    /// Load threads for a specific container
+    func loadThreads(for container: AgentKit.ThreadContainer) async {
+        guard let store = threadStore else {
+            print("⚠️ ThreadStore not available")
+            return
+        }
 
         do {
-            try await store.save(conversation)
+            let threads = try await store.threads(for: container)
+            // Merge into workspace (avoid duplicates)
+            for thread in threads {
+                if !workspace.threads.contains(where: { $0.id == thread.id }) {
+                    workspace.threads.append(thread)
+                }
+            }
+            print("✅ Loaded \(threads.count) threads for \(container)")
         } catch {
-            print("⚠️ Failed to save conversation: \(error)")
+            print("⚠️ Failed to load threads: \(error)")
+        }
+    }
+
+    /// Save a thread to persistent storage
+    func saveThread(_ thread: AgentKit.Thread) async {
+        guard let store = threadStore else { return }
+
+        do {
+            try await store.save(thread)
+        } catch {
+            print("⚠️ Failed to save thread: \(error)")
         }
 
         // Update local workspace copy
-        if let index = workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-            workspace.conversations[index] = conversation
+        if let index = workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+            workspace.threads[index] = thread
         } else {
-            workspace.conversations.insert(conversation, at: 0)
+            workspace.threads.insert(thread, at: 0)
+        }
+
+        // Index messages into MemoryStore for semantic search
+        await indexThread(thread)
+    }
+
+    /// Index a thread for semantic search
+    func indexThread(_ thread: AgentKit.Thread) async {
+        guard let memoryStore = memoryStore else { return }
+
+        do {
+            try await memoryStore.indexThread(thread)
+        } catch {
+            print("⚠️ Failed to index thread: \(error)")
         }
     }
 
-    /// Create a new conversation and persist it
-    func createConversation(
+    /// Create a new thread and persist it
+    func createThread(
         title: String,
         agentName: String? = nil,
         spaceId: SpaceID? = nil
-    ) async -> Conversation {
-        var conversation = Conversation(title: title, agentName: agentName)
-        conversation.spaceId = spaceId
-        await saveConversation(conversation)
-        return conversation
+    ) async -> AgentKit.Thread {
+        let container: AgentKit.ThreadContainer
+        if let spaceId = spaceId {
+            container = .space(spaceId.rawValue)
+        } else if let agentName = agentName {
+            container = .agent(agentName)
+        } else {
+            container = .global
+        }
+
+        let thread = AgentKit.Thread(title: title, container: container)
+        await saveThread(thread)
+        return thread
     }
 
-    /// Delete a conversation
-    func deleteConversation(_ id: ConversationID) async {
-        guard let store = conversationStore else { return }
+    /// Create a new thread in a container
+    func createThread(in container: AgentKit.ThreadContainer, title: String = "New Thread") async -> AgentKit.Thread {
+        let thread = AgentKit.Thread(title: title, container: container)
+        await saveThread(thread)
+        return thread
+    }
+
+    /// Delete a thread
+    func deleteThread(_ id: AgentKit.ThreadID) async {
+        guard let store = threadStore else { return }
 
         do {
             try await store.delete(id)
         } catch {
-            print("⚠️ Failed to delete conversation: \(error)")
+            print("⚠️ Failed to delete thread: \(error)")
         }
 
-        workspace.conversations.removeAll { $0.id == id }
+        workspace.threads.removeAll { $0.id == id }
+
+        // Also delete from memory index
+        try? await memoryStore?.deleteThreadIndex(id)
     }
 
-    /// Load conversations for a specific space
-    func loadConversations(for spaceId: SpaceID) async -> [Conversation] {
-        guard let store = conversationStore else { return [] }
+    /// Add a message to a thread and persist
+    func addMessageToThread(_ message: AgentKit.ThreadMessage, threadId: AgentKit.ThreadID) async {
+        guard var thread = workspace.threads.first(where: { $0.id == threadId }) else {
+            return
+        }
+
+        thread.addMessage(message)
+        await saveThread(thread)
+
+        // Index the new message
+        try? await memoryStore?.indexThreadMessage(message, thread: thread)
+    }
+
+    /// Load threads for a specific space
+    func loadThreads(for spaceId: SpaceID) async -> [AgentKit.Thread] {
+        guard let store = threadStore else { return [] }
 
         do {
-            return try await store.load(for: spaceId)
+            return try await store.threads(for: .space(spaceId.rawValue))
         } catch {
-            print("⚠️ Failed to load conversations for space: \(error)")
+            print("⚠️ Failed to load threads for space: \(error)")
             return []
         }
+    }
+
+    /// Get all threads sorted by update time
+    func getAllThreads() -> [AgentKit.Thread] {
+        workspace.threads.sorted { $0.updatedAt > $1.updatedAt }
     }
 
     // MARK: - Agent Block Refresh
@@ -1400,95 +1551,11 @@ public final class AppState: ObservableObject {
         reviews.first { $0.id == reviewId }
     }
 
-    private func setupSampleReviews() {
-        // Sample reviews for development
-        let review1 = Review(
-            title: "Update documentation for Q4 release",
-            description: "Comprehensive update to the user guide and API documentation.",
-            author: Author.agent("Research Agent"),
-            baseCommit: "abc123",
-            headCommit: "def456",
-            targetBranch: "main",
-            sourceBranch: "docs/q4-update",
-            status: .open,
-            summary: ReviewSummary(
-                overview: "Added new sections for agent configuration and updated API examples.",
-                filesChanged: 5,
-                additions: 342,
-                deletions: 87,
-                keyChanges: [
-                    KeyChange(type: .content, description: "Added agent setup guide", files: ["docs/agents.md"]),
-                    KeyChange(type: .content, description: "Updated API reference", files: ["docs/api.md"])
-                ],
-                impact: .moderate
-            ),
-            changes: []
-        )
-
-        let review2 = Review(
-            title: "Add fitness tracking integration",
-            description: "Connects to Apple Health for workout data.",
-            author: Author.agent("Technical Agent"),
-            baseCommit: "ghi789",
-            headCommit: "jkl012",
-            targetBranch: "main",
-            sourceBranch: "feature/fitness",
-            status: .draft,
-            summary: ReviewSummary(
-                overview: "New fitness tracking module with Health app integration.",
-                filesChanged: 8,
-                additions: 567,
-                deletions: 12,
-                keyChanges: [
-                    KeyChange(type: .code, description: "Added HealthKit integration", files: ["Sources/Fitness/HealthService.swift"])
-                ],
-                impact: .major
-            ),
-            changes: []
-        )
-
-        reviews = [review1, review2]
-    }
-
-    private func setupSampleDecisionCards() async {
-        // Sample decision cards for development
-        let card1 = DecisionCard(
-            title: "Publish Draft: Q4 Strategy Document",
-            description: "Research Agent completed the Q4 strategy document based on your notes. Ready for review before publishing to the Strategy Space.",
-            sourceType: .document,
-            sourceId: "doc-strategy-q4",
-            requestedBy: "Research Agent"
-        )
-
-        let card2 = DecisionCard(
-            title: "Execute: Database Schema Update",
-            description: "Technical Agent wants to run database migration to add user preferences table. This affects the Users Space.",
-            sourceType: .agentAction,
-            sourceId: "task-db-migration",
-            comments: [
-                DecisionComment(content: "Tested in staging - migration completes in ~30 seconds with no downtime.", author: "Technical Agent")
-            ],
-            requestedBy: "Technical Agent"
-        )
-
-        let card3 = DecisionCard(
-            title: "Generated: Weekly Summary Email",
-            description: "Created your weekly summary email based on completed tasks and upcoming calendar events.",
-            sourceType: .generatedContent,
-            requestedBy: "Concierge Agent"
-        )
-
-        _ = await decisionManager.submit(card1)
-        _ = await decisionManager.submit(card2)
-        _ = await decisionManager.submit(card3)
-    }
-
     // MARK: - Agent Registry Operations
 
     /// Load registered agents
     func loadRegisteredAgents() async {
         registeredAgents = await agentRegistry.agents
-        // No sample agents - only show user-created agents
     }
 
     /// Register a new agent
@@ -1500,47 +1567,6 @@ public final class AppState: ObservableObject {
     /// Get available agents (ready to accept tasks)
     var availableAgents: [RegisteredAgent] {
         registeredAgents.filter { $0.status.canAcceptTasks }
-    }
-
-    private func setupSampleAgents() async {
-        // Sample agents matching the profiles from agent_profiles.md
-        let concierge = RegisteredAgent(
-            id: AgentID("concierge"),
-            name: "Concierge",
-            profile: .concierge,
-            capabilities: [.routing, .scheduling, .conversation, .summarization],
-            status: .available
-        )
-
-        let researchAgent = RegisteredAgent(
-            id: AgentID("research-agent"),
-            name: "Research Agent",
-            profile: .founder,
-            capabilities: [.research, .synthesis, .retrieval, .writing],
-            status: .available,
-            ownedSpaces: [SpaceID("research-space")]
-        )
-
-        let technicalAgent = RegisteredAgent(
-            id: AgentID("technical-agent"),
-            name: "Technical Agent",
-            profile: .integrator,
-            capabilities: [.coding, .debugging, .architecture, .integration],
-            status: .available
-        )
-
-        let careerCoach = RegisteredAgent(
-            id: AgentID("career-coach"),
-            name: "Career Coach",
-            profile: .coach,
-            capabilities: [.careerCoaching, .conversation, .patternRecognition],
-            status: .available
-        )
-
-        await agentRegistry.register(concierge)
-        await agentRegistry.register(researchAgent)
-        await agentRegistry.register(technicalAgent)
-        await agentRegistry.register(careerCoach)
     }
 
     // MARK: - Delegation Operations
@@ -1606,7 +1632,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     // Spaces (replaces Knowledge Workspace)
     case spaces
     case documents
-    case conversations
+    case threads
 
     // Operations
     case tasks
@@ -1624,7 +1650,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .headspace: "Headspace"  // Cross-space activity view
         case .spaces: "Spaces"
         case .documents: "Documents"
-        case .conversations: "Conversations"
+        case .threads: "Threads"
         case .tasks: "Tasks"
         case .reviews: "Reviews"
         case .agents: "Agents"
@@ -1638,7 +1664,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         case .headspace: "brain.head.profile"  // Headspace icon
         case .spaces: "folder"
         case .documents: "doc.text"
-        case .conversations: "bubble.left.and.bubble.right"
+        case .threads: "bubble.left.and.bubble.right"
         case .tasks: "checklist"
         case .reviews: "checkmark.seal"
         case .agents: "person.2"
@@ -1652,7 +1678,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
         switch self {
         case .headspace:
             return .primary
-        case .spaces, .documents, .conversations:
+        case .spaces, .documents, .threads:
             return .workspace
         case .tasks, .reviews:
             return .activity
@@ -1666,7 +1692,7 @@ enum SidebarItem: String, CaseIterable, Identifiable {
     }
 
     static var workspaceItems: [SidebarItem] {
-        [.spaces, .documents, .conversations]
+        [.spaces, .documents, .threads]
     }
 
     static var activityItems: [SidebarItem] {
@@ -1687,10 +1713,10 @@ enum SidebarGroup: String {
 
 // MARK: - Workspace State
 
-/// Observable state for the workspace (documents, conversations, coaching)
+/// Observable state for the workspace (documents, threads, coaching)
 class WorkspaceState: ObservableObject {
     @Published var documents: [Document] = []
-    @Published var conversations: [Conversation] = []
+    @Published var threads: [AgentKit.Thread] = []
     @Published var coachingSessions: [CoachingSession] = []
     @Published var folders: [Folder] = []
     @Published var tags: [Tag] = []
@@ -1700,8 +1726,8 @@ class WorkspaceState: ObservableObject {
         documents.filter { $0.isStarred }
     }
 
-    var starredConversations: [Conversation] {
-        conversations.filter { $0.isStarred }
+    var starredThreads: [AgentKit.Thread] {
+        threads.filter { $0.isStarred }
     }
 
     // Recent items (last 7 days)
@@ -1711,9 +1737,9 @@ class WorkspaceState: ObservableObject {
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    var recentConversations: [Conversation] {
+    var recentThreads: [AgentKit.Thread] {
         let cutoff = Date().addingTimeInterval(-7 * 24 * 60 * 60)
-        return conversations.filter { $0.updatedAt > cutoff }
+        return threads.filter { $0.updatedAt > cutoff }
             .sorted { $0.updatedAt > $1.updatedAt }
     }
 
@@ -1805,14 +1831,14 @@ struct PendingApproval: Identifiable, Hashable {
 /// SwiftUI-friendly view model for Space display
 struct SpaceViewModel: Identifiable {
     let id: String
-    let name: String
-    let description: String?
-    let ownerName: String
-    let icon: String
-    let color: Color
-    let documentCount: Int
-    let contributorCount: Int
-    let updatedAt: Date
+    var name: String
+    var description: String?
+    var ownerName: String
+    var icon: String
+    var color: Color
+    var documentCount: Int
+    var contributorCount: Int
+    var updatedAt: Date
     var isStarred: Bool
     var path: URL?
     var channels: [ChannelViewModel] = []  // Child spaces/folders as channels
@@ -1914,19 +1940,19 @@ struct ChannelViewModel: Identifiable {
     }
 }
 
-// MARK: - Conversation Errors
+// MARK: - Thread Errors (AppState-level)
 
-enum ConversationError: Error, LocalizedError {
+enum ThreadError: Error, LocalizedError {
     case notConnected
-    case conversationNotFound
+    case threadNotFound
     case sendFailed(String)
 
     var errorDescription: String? {
         switch self {
         case .notConnected:
             return "Not connected to agent. Please connect first."
-        case .conversationNotFound:
-            return "Conversation not found."
+        case .threadNotFound:
+            return "Thread not found."
         case .sendFailed(let reason):
             return "Failed to send message: \(reason)"
         }

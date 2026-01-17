@@ -383,7 +383,8 @@ struct AgentConfiguratorView: View {
             let port = url.port ?? 1234
             return LMStudioProvider(host: host, port: port, defaultModel: model)
         default:
-            return MockLLMProvider()
+            // Default to Apple Intelligence if provider not recognized
+            return FoundationModelsProvider()
         }
     }
 

@@ -279,6 +279,99 @@ public actor EventKitEventSource: EventSource {
             .filter { monitoredCalendarIds.contains($0.calendarIdentifier) }
     }
 
+    // MARK: - Health Check
+
+    /// Health status for EventKit access
+    public enum HealthStatus: Sendable {
+        case healthy(String)
+        case warning(String)
+        case error(String)
+        case unknown
+
+        public var isHealthy: Bool {
+            if case .healthy = self { return true }
+            return false
+        }
+
+        public var message: String {
+            switch self {
+            case .healthy(let msg): return msg
+            case .warning(let msg): return msg
+            case .error(let msg): return msg
+            case .unknown: return "Unknown status"
+            }
+        }
+    }
+
+    /// Check EventKit health status
+    /// This verifies actual access, not just permission status
+    public func checkHealth() async -> HealthStatus {
+        let authStatus = EKEventStore.authorizationStatus(for: .event)
+
+        switch authStatus {
+        case .fullAccess:
+            // Actually verify we can fetch calendars
+            let calendars = eventStore.calendars(for: .event)
+            if calendars.isEmpty {
+                return .warning("Full access granted but no calendars found")
+            }
+            return .healthy("\(calendars.count) calendars accessible")
+
+        case .authorized:
+            // Legacy authorization (pre-macOS 14)
+            let calendars = eventStore.calendars(for: .event)
+            if calendars.isEmpty {
+                return .warning("Authorized but no calendars found")
+            }
+            return .healthy("\(calendars.count) calendars accessible (legacy auth)")
+
+        case .writeOnly:
+            return .warning("Write-only access - cannot read events. Enable full access in System Settings > Privacy & Security > Calendars")
+
+        case .notDetermined:
+            return .warning("Calendar access not requested yet")
+
+        case .restricted:
+            return .error("Calendar access restricted by system policy")
+
+        case .denied:
+            return .error("Calendar access denied - enable in System Settings > Privacy & Security > Calendars")
+
+        @unknown default:
+            return .unknown
+        }
+    }
+
+    /// Static health check without requiring an instance
+    public static func checkEventKitHealth() -> HealthStatus {
+        let store = EKEventStore()
+        let authStatus = EKEventStore.authorizationStatus(for: .event)
+
+        switch authStatus {
+        case .fullAccess, .authorized:
+            let calendars = store.calendars(for: .event)
+            if calendars.isEmpty {
+                return .warning("Access granted but no calendars found")
+            }
+            return .healthy("\(calendars.count) calendars accessible")
+
+        case .writeOnly:
+            return .warning("Write-only access - cannot read events")
+
+        case .notDetermined:
+            return .warning("Calendar access not requested")
+
+        case .restricted:
+            return .error("Calendar access restricted")
+
+        case .denied:
+            return .error("Calendar access denied - enable in System Settings > Privacy & Security > Calendars")
+
+        @unknown default:
+            return .unknown
+        }
+    }
+
     // MARK: - Public API
 
     /// Get today's events

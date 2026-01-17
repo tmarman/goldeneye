@@ -485,7 +485,7 @@ struct AgentPanelView: View {
             return "Space Navigator"
         case .documents:
             return "Writing Assistant"
-        case .conversations:
+        case .threads:
             return "Assistant"
         case .tasks:
             return "Task Manager"
@@ -525,12 +525,12 @@ struct AgentPanelView: View {
                 description: "Documents",
                 hasContent: false
             )
-        case .conversations:
-            if let convId = appState.selectedConversationId,
-               let conv = appState.workspace.conversations.first(where: { $0.id == convId }) {
+        case .threads:
+            if let threadId = appState.selectedThreadId,
+               let thread = appState.workspace.threads.first(where: { $0.id == threadId }) {
                 return ContextInfo(
                     icon: "bubble.left",
-                    description: "In conversation: \(conv.title)",
+                    description: "In thread: \(thread.title)",
                     hasContent: true
                 )
             }
@@ -619,7 +619,7 @@ struct AgentPanelView: View {
             return ["Create new Space", "Find documents", "Recent activity"]
         case .documents:
             return ["Improve writing", "Summarize", "Expand this", "Fix grammar", "Suggest structure"]
-        case .conversations:
+        case .threads:
             return ["Continue", "Summarize thread", "Find action items"]
         case .tasks:
             return ["What's due today?", "Prioritize tasks", "Delegate this"]

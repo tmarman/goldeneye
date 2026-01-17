@@ -2,6 +2,49 @@ import AgentKit
 import AppKit
 import SwiftUI
 
+// MARK: - Single Instance Check
+
+/// Checks for existing Envoy instances and handles accordingly
+/// Returns true if this instance should continue, false if it should exit
+func checkSingleInstance() -> Bool {
+    // Check for --bypass flag to allow multiple instances
+    if CommandLine.arguments.contains("--bypass") {
+        print("⚠️ Running in bypass mode - multiple instances allowed")
+        return true
+    }
+
+    // Find other running Envoy processes
+    // Only match actual Envoy app instances, not processes that happen to contain "Envoy" in the name
+    let currentPID = ProcessInfo.processInfo.processIdentifier
+    let runningApps = NSWorkspace.shared.runningApplications.filter { app in
+        // Match by bundle identifier (most reliable)
+        if let bundleId = Bundle.main.bundleIdentifier, app.bundleIdentifier == bundleId {
+            return true
+        }
+        // Match by exact localized name AND it must be an app (not a background process)
+        if app.localizedName == "Envoy" && app.activationPolicy == .regular {
+            return true
+        }
+        return false
+    }
+
+    // Filter out current process
+    let otherInstances = runningApps.filter { $0.processIdentifier != currentPID }
+
+    if let existingApp = otherInstances.first {
+        print("📱 Envoy is already running (PID: \(existingApp.processIdentifier))")
+        print("   Activating existing instance...")
+
+        // Activate the existing instance
+        existingApp.activate(options: [.activateAllWindows, .activateIgnoringOtherApps])
+
+        // Exit this instance
+        return false
+    }
+
+    return true
+}
+
 // MARK: - App Delegate that ACTUALLY works
 
 @MainActor
@@ -75,15 +118,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Only persist if there's actual content
         if !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Create a new conversation from the quick note
-            let newConv = Conversation(
+            // Create a new thread from the quick note
+            var newThread = AgentKit.Thread(
                 title: generateNoteTitle(from: content),
-                messages: [
-                    ConversationMessage(role: .user, content: content)
-                ],
-                agentName: nil
+                container: .global
             )
-            AppState.shared.workspace.conversations.insert(newConv, at: 0)
+            newThread.addMessage(ThreadMessage.user(content))
+            AppState.shared.workspace.threads.insert(newThread, at: 0)
         }
 
         noteWindow.close()
@@ -155,6 +196,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window?.setFrameAutosaveName("MainWindow")
             window?.isReleasedWhenClosed = false
 
+            // Configure toolbar for unified appearance (traffic lights in sidebar)
+            // This creates the Apple Notes/Podcasts look where traffic lights sit on sidebar background
+            let toolbar = NSToolbar(identifier: "MainToolbar")
+            toolbar.displayMode = .iconOnly
+            window?.toolbar = toolbar
+            window?.toolbarStyle = .unified
+
             // Make window key window
             window?.becomeKey()
         }
@@ -171,6 +219,15 @@ struct EnvoyApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     private var appState: AppState { AppState.shared }
+
+    init() {
+        // Check for single instance - exit if another instance is running
+        if !checkSingleInstance() {
+            print("🚫 Exiting - another Envoy instance is already running")
+            print("   Use --bypass flag to run multiple instances")
+            exit(0)
+        }
+    }
 
     var body: some Scene {
         // Menu bar only - window handled by AppDelegate
@@ -200,8 +257,8 @@ struct EnvoyApp: App {
                 }
                 .keyboardShortcut("m", modifiers: .command)
 
-                Button("New Conversation") {
-                    AppState.shared.showNewConversationSheet = true
+                Button("New Thread") {
+                    AppState.shared.showNewThreadSheet = true
                 }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             }
@@ -217,7 +274,7 @@ struct EnvoyApp: App {
 extension Notification.Name {
     static let openSettings = Notification.Name("openSettings")
     static let openModelPicker = Notification.Name("openModelPicker")
-    static let deleteSelectedConversation = Notification.Name("deleteSelectedConversation")
+    static let deleteSelectedThread = Notification.Name("deleteSelectedThread")
     static let createQuickNote = Notification.Name("createQuickNote")
 }
 

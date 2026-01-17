@@ -68,12 +68,12 @@ struct DashboardView: View {
                     }
                 }
 
-                // Agent Conversations section
-                if !agentConversations.isEmpty {
-                    DashboardSection(title: "Agent Conversations", icon: "bubble.left.and.bubble.right") {
+                // Agent Chats section (A2A communication)
+                if !agentChats.isEmpty {
+                    DashboardSection(title: "Agent Chats", icon: "bubble.left.and.bubble.right") {
                         VStack(spacing: 12) {
-                            ForEach(agentConversations, id: \.id) { conversation in
-                                AgentConversationCard(conversation: conversation)
+                            ForEach(agentChats, id: \.id) { chat in
+                                AgentChatCard(chat: chat)
                             }
                         }
                     }
@@ -100,9 +100,9 @@ struct DashboardView: View {
                 }
 
                 // Model usage analytics
-                if !appState.workspace.conversations.isEmpty {
+                if !appState.workspace.threads.isEmpty {
                     DashboardSection(title: "Model Usage", icon: "chart.pie") {
-                        ModelUsageAnalyticsView(conversations: appState.workspace.conversations)
+                        ModelUsageAnalyticsView(threads: appState.workspace.threads)
                     }
                 }
             }
@@ -170,23 +170,10 @@ struct DashboardView: View {
         return agents
     }
 
-    private var agentConversations: [AgentConversation] {
-        // Mock conversations for demo
-        guard connectedAgentCount > 0 else { return [] }
-
-        return [
-            AgentConversation(
-                id: "conv-1",
-                participants: ["Local Agent", "Remote Agent"],
-                topic: "Agent Discovery",
-                messages: [
-                    AgentMessage(sender: "Local Agent", content: "Hello! I'm a Claude Code agent running on Tim's MacBook. I specialize in Swift and TypeScript development.", timestamp: Date().addingTimeInterval(-60)),
-                    AgentMessage(sender: "Remote Agent", content: "Nice to meet you! I'm running on the Home Mac Studio. I have access to GPU resources for ML tasks.", timestamp: Date().addingTimeInterval(-30)),
-                    AgentMessage(sender: "Local Agent", content: "Great! We could collaborate on compute-intensive tasks. I'll handle code generation and you can run inference.", timestamp: Date())
-                ],
-                isActive: true
-            )
-        ]
+    private var agentChats: [AgentChat] {
+        // Agent chats (A2A communication) will be populated when A2A chat history is implemented
+        // For now, return empty to hide the section (no mock data for demo)
+        return []
     }
 }
 
@@ -623,7 +610,7 @@ struct AgentActivity: Identifiable {
     }
 }
 
-struct AgentConversation: Identifiable {
+struct AgentChat: Identifiable {
     let id: String
     let participants: [String]
     let topic: String
@@ -893,10 +880,10 @@ struct AgentActivityCard: View {
     }
 }
 
-// MARK: - Agent Conversation Card
+// MARK: - Agent Chat Card (A2A Communication)
 
-struct AgentConversationCard: View {
-    let conversation: AgentConversation
+struct AgentChatCard: View {
+    let chat: AgentChat
     @State private var isExpanded = true
 
     var body: some View {
@@ -907,17 +894,17 @@ struct AgentConversationCard: View {
                     .foregroundStyle(.purple)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(conversation.topic)
+                    Text(chat.topic)
                         .font(.headline)
 
-                    Text(conversation.participants.joined(separator: " ↔ "))
+                    Text(chat.participants.joined(separator: " ↔ "))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
 
                 Spacer()
 
-                if conversation.isActive {
+                if chat.isActive {
                     HStack(spacing: 4) {
                         Circle()
                             .fill(.green)
@@ -942,7 +929,7 @@ struct AgentConversationCard: View {
             // Messages
             if isExpanded {
                 VStack(spacing: 8) {
-                    ForEach(conversation.messages) { message in
+                    ForEach(chat.messages) { message in
                         AgentMessageBubble(message: message)
                     }
                 }
@@ -1162,18 +1149,22 @@ struct StepRow: View {
 // MARK: - Model Usage Analytics View
 
 struct ModelUsageAnalyticsView: View {
-    let conversations: [Conversation]
+    let threads: [AgentKit.Thread]
+
+    init(threads: [AgentKit.Thread]) {
+        self.threads = threads
+    }
 
     // Computed analytics
     private var modelUsage: [ModelUsageData] {
         var usage: [String: ModelUsageData] = [:]
 
-        for conversation in conversations {
-            guard let modelId = conversation.modelId else { continue }
+        for thread in threads {
+            guard let modelId = thread.modelId else { continue }
             let shortName = modelId.components(separatedBy: "/").last ?? modelId
 
-            let tokens = conversation.messages.compactMap { $0.metadata?.tokens }.reduce(0, +)
-            let messageCount = conversation.messages.filter { $0.role == .assistant }.count
+            let tokens = thread.messages.compactMap { $0.metadata?.tokens }.reduce(0, +)
+            let messageCount = thread.messages.filter { $0.role == .assistant }.count
 
             if var existing = usage[shortName] {
                 existing.conversations += 1
@@ -1197,12 +1188,12 @@ struct ModelUsageAnalyticsView: View {
         modelUsage.reduce(0) { $0 + $1.tokens }
     }
 
-    private var totalConversations: Int {
-        conversations.count
+    private var totalThreads: Int {
+        threads.count
     }
 
     private var totalMessages: Int {
-        conversations.reduce(0) { $0 + $1.messages.count }
+        threads.reduce(0) { $0 + $1.messages.count }
     }
 
     var body: some View {
@@ -1211,8 +1202,8 @@ struct ModelUsageAnalyticsView: View {
             HStack(spacing: 20) {
                 AnalyticsSummaryCard(
                     icon: "bubble.left.and.bubble.right",
-                    value: "\(totalConversations)",
-                    label: "Conversations",
+                    value: "\(totalThreads)",
+                    label: "Threads",
                     color: .blue
                 )
                 AnalyticsSummaryCard(

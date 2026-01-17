@@ -731,7 +731,7 @@ struct AgentDraft {
 
 struct BuilderMessage: Identifiable {
     let id = UUID()
-    let role: MessageRole
+    let role: MessageSenderRole
     let content: String
     let timestamp = Date()
 }

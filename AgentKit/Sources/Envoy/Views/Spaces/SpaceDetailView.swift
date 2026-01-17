@@ -1,5 +1,6 @@
 import AgentKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Space Detail View
 
@@ -10,6 +11,10 @@ struct SpaceDetailView: View {
     @State private var messageInput = ""
     @State private var showProfilePanel = false
     @State private var selectedMemberId: String?
+    @State private var showSearchSheet = false
+    @State private var searchQuery = ""
+    @State private var showEmojiPicker = false
+    @State private var showFilePicker = false
     @FocusState private var isInputFocused: Bool
 
     var space: SpaceViewModel? {
@@ -22,11 +27,10 @@ struct SpaceDetailView: View {
         return space?.channels.first { $0.id == channelId }
     }
 
-    /// Get conversations for this space/channel
-    var channelMessages: [Conversation] {
-        // Filter conversations that belong to this space
-        // For now, show all conversations if no space filter is set
-        appState.workspace.conversations
+    /// Get threads for this space/channel
+    var channelThreads: [AgentKit.Thread] {
+        // Filter threads that belong to this space
+        appState.workspace.threads.filter { $0.container == .space(spaceId.rawValue) }
     }
 
     var body: some View {
@@ -55,6 +59,13 @@ struct SpaceDetailView: View {
             }
         }
         .navigationTitle(space?.name ?? "Space")
+        .sheet(isPresented: $showSearchSheet) {
+            SearchMessagesSheet(
+                threads: channelThreads,
+                spaceId: spaceId,
+                searchQuery: $searchQuery
+            )
+        }
     }
 
     // MARK: - Channel Header
@@ -101,20 +112,32 @@ struct SpaceDetailView: View {
                 .buttonStyle(.plain)
                 .help("Show members")
 
-                Button(action: { /* TODO: Search */ }) {
+                Button(action: { showSearchSheet = true }) {
                     Image(systemName: "magnifyingglass")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
-                .help("Search")
+                .help("Search messages")
 
-                Button(action: { /* TODO: More options */ }) {
+                Menu {
+                    Button(action: { appState.showAgentRecruitment = true }) {
+                        Label("Invite Agent", systemImage: "person.badge.plus")
+                    }
+                    Button(action: { appState.showNewDocumentSheet = true }) {
+                        Label("New Document", systemImage: "doc.badge.plus")
+                    }
+                    Divider()
+                    Button(action: { appState.selectedSidebarItem = .settings }) {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                } label: {
                     Image(systemName: "ellipsis")
                         .font(.title3)
                         .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
                 .help("More options")
             }
         }
@@ -130,17 +153,16 @@ struct SpaceDetailView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     // If no messages, show welcome message
-                    if channelMessages.isEmpty {
+                    if channelThreads.isEmpty {
                         welcomeMessage
                     } else {
                         // Group messages by date
-                        ForEach(channelMessages) { conversation in
-                            // Each conversation becomes a thread starter
-                            ForEach(conversation.messages) { message in
-                                MessageRow(
+                        ForEach(channelThreads) { thread in
+                            // Each thread shows its messages
+                            ForEach(thread.messages) { message in
+                                ThreadMessageRow(
                                     message: message,
-                                    conversationTitle: conversation.title,
-                                    agentName: conversation.agentName,
+                                    threadTitle: thread.title,
                                     onMemberTap: { memberId in
                                         selectedMemberId = memberId
                                         showProfilePanel = true
@@ -249,26 +271,45 @@ struct SpaceDetailView: View {
                 Spacer()
 
                 // Mention and emoji
-                Button(action: { /* TODO: Mention */ }) {
+                Button(action: { insertMention() }) {
                     Image(systemName: "at")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .help("Mention someone")
 
-                Button(action: { /* TODO: Emoji */ }) {
+                Button(action: { showEmojiPicker = true }) {
                     Image(systemName: "face.smiling")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .popover(isPresented: $showEmojiPicker) {
+                    EmojiPickerView { emoji in
+                        messageInput += emoji
+                        showEmojiPicker = false
+                    }
+                }
+                .help("Add emoji")
 
-                Button(action: { /* TODO: Attach */ }) {
+                Button(action: { showFilePicker = true }) {
                     Image(systemName: "paperclip")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.plain)
+                .fileImporter(
+                    isPresented: $showFilePicker,
+                    allowedContentTypes: [.item],
+                    allowsMultipleSelection: false
+                ) { result in
+                    if case .success(let urls) = result, let url = urls.first {
+                        // Add file reference to message
+                        messageInput += " [\(url.lastPathComponent)](\(url.path))"
+                    }
+                }
+                .help("Attach file")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -304,14 +345,42 @@ struct SpaceDetailView: View {
 
     private var formattingButtons: [(icon: String, label: String, action: () -> Void)] {
         [
-            ("bold", "Bold", {}),
-            ("italic", "Italic", {}),
-            ("strikethrough", "Strikethrough", {}),
-            ("link", "Link", {}),
-            ("list.bullet", "Bullet list", {}),
-            ("list.number", "Numbered list", {}),
-            ("chevron.left.forwardslash.chevron.right", "Code", {}),
+            ("bold", "Bold", { wrapSelection(with: "**") }),
+            ("italic", "Italic", { wrapSelection(with: "_") }),
+            ("strikethrough", "Strikethrough", { wrapSelection(with: "~~") }),
+            ("link", "Link", { insertLink() }),
+            ("list.bullet", "Bullet list", { insertPrefix("- ") }),
+            ("list.number", "Numbered list", { insertPrefix("1. ") }),
+            ("chevron.left.forwardslash.chevron.right", "Code", { wrapSelection(with: "`") }),
         ]
+    }
+
+    // MARK: - Formatting Helpers
+
+    private func wrapSelection(with wrapper: String) {
+        // For simplicity, wrap the entire input or add placeholder
+        if messageInput.isEmpty {
+            messageInput = "\(wrapper)text\(wrapper)"
+        } else {
+            messageInput = "\(wrapper)\(messageInput)\(wrapper)"
+        }
+    }
+
+    private func insertPrefix(_ prefix: String) {
+        if messageInput.isEmpty {
+            messageInput = prefix
+        } else {
+            messageInput = prefix + messageInput
+        }
+    }
+
+    private func insertLink() {
+        messageInput += "[link text](url)"
+    }
+
+    private func insertMention() {
+        messageInput += "@"
+        isInputFocused = true
     }
 
     // MARK: - Profile Panel
@@ -365,28 +434,36 @@ struct SpaceDetailView: View {
 
                     Divider()
 
-                    // Contact info
-                    VStack(alignment: .leading, spacing: 12) {
-                        ProfileInfoRow(icon: "envelope", label: "Email", value: "agent@local")
-                        ProfileInfoRow(icon: "clock", label: "Local time", value: "4:41 PM")
-                        ProfileInfoRow(icon: "calendar", label: "Joined", value: "January 2025")
+                    // Action buttons - Message and Huddle
+                    HStack(spacing: 12) {
+                        Button(action: { startDirectMessage(with: memberId) }) {
+                            Label("Message", systemImage: "bubble.left.fill")
+                                .font(.subheadline.weight(.medium))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+
+                        Button(action: { startHuddle(with: memberId) }) {
+                            Label("Huddle", systemImage: "phone.fill")
+                                .font(.subheadline.weight(.medium))
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
                     }
                     .padding(.horizontal)
 
                     Divider()
 
-                    // Actions
-                    HStack(spacing: 12) {
-                        Button(action: { /* TODO: Message */ }) {
-                            Label("Message", systemImage: "bubble.left")
-                        }
-                        .buttonStyle(.bordered)
-
-                        Button(action: { /* TODO: Call */ }) {
-                            Label("Huddle", systemImage: "phone")
-                        }
-                        .buttonStyle(.bordered)
+                    // Contact info
+                    VStack(alignment: .leading, spacing: 12) {
+                        ProfileInfoRow(icon: "envelope", label: "Email", value: "agent@local")
+                        ProfileInfoRow(icon: "clock", label: "Local time", value: Date().formatted(date: .omitted, time: .shortened))
+                        ProfileInfoRow(icon: "calendar", label: "Status", value: "Active")
                     }
+                    .padding(.horizontal)
+
                 }
                 .padding()
             }
@@ -394,35 +471,126 @@ struct SpaceDetailView: View {
         .background(.ultraThinMaterial)
     }
 
+    // MARK: - Direct Message & Huddle Actions
+
+    /// Start a direct message thread with the selected member
+    private func startDirectMessage(with memberId: String) {
+        // Create a DM thread with this member
+        let memberName = memberId == "user" ? "You" : "Technical Agent"
+        let dmTitle = "DM with \(memberName)"
+
+        Task {
+            // Check if a DM thread already exists with this member
+            let existingDM = appState.workspace.threads.first { thread in
+                if case .global = thread.container {
+                    return thread.title.contains(memberName) && thread.title.hasPrefix("DM")
+                }
+                return false
+            }
+
+            if let existing = existingDM {
+                // Navigate to existing DM
+                appState.selectedThreadId = existing.id
+            } else {
+                // Create new DM thread
+                var thread = AgentKit.Thread(
+                    title: dmTitle,
+                    container: .global  // DMs are global, not space-scoped
+                )
+                thread.addMessage(ThreadMessage.system("Started a conversation with \(memberName)"))
+                appState.workspace.threads.insert(thread, at: 0)
+
+                // Persist the new thread
+                if let store = appState.threadStore {
+                    try? await store.save(thread)
+                }
+
+                // Navigate to the new DM
+                appState.selectedThreadId = thread.id
+            }
+
+            // Close the profile panel
+            showProfilePanel = false
+        }
+    }
+
+    /// Start a huddle (voice/video call) with the selected member
+    private func startHuddle(with memberId: String) {
+        let memberName = memberId == "user" ? "You" : "Technical Agent"
+
+        // For now, create a system message indicating huddle intent
+        // In future, this would integrate with WebRTC or similar
+        Task {
+            // Find or create a thread for huddle notifications
+            var thread = appState.workspace.threads.first { thread in
+                if case .space(let id) = thread.container {
+                    return id == spaceId.rawValue
+                }
+                return false
+            }
+
+            if thread == nil {
+                // Create new thread for this space
+                thread = AgentKit.Thread(
+                    title: "Space Activity",
+                    container: .space(spaceId.rawValue)
+                )
+                appState.workspace.threads.insert(thread!, at: 0)
+            }
+
+            // Add huddle notification message
+            let huddleMessage = ThreadMessage.system("🎙️ \(UserDefaults.standard.string(forKey: "userName") ?? "You") started a huddle with \(memberName). Voice/video calls coming soon!")
+            thread!.addMessage(huddleMessage)
+
+            // Update the thread
+            if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread!.id }) {
+                appState.workspace.threads[index] = thread!
+            }
+
+            // Persist
+            if let store = appState.threadStore {
+                try? await store.save(thread!)
+            }
+
+            // Close the profile panel
+            showProfilePanel = false
+        }
+    }
+
     // MARK: - Actions
 
     private func sendMessage() {
         guard !messageInput.isEmpty else { return }
 
-        // Create new conversation message
+        // Create new thread message
         Task {
-            // For now, add to first conversation or create new one
-            if var conversation = appState.workspace.conversations.first {
-                let message = ConversationMessage(
-                    role: .user,
-                    content: messageInput
-                )
-                conversation.messages.append(message)
+            // Find existing thread in this space, or create new one
+            if var thread = channelThreads.first {
+                let message = ThreadMessage.user(messageInput)
+                thread.addMessage(message)
 
-                // Update the conversation in workspace
-                if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-                    appState.workspace.conversations[index] = conversation
+                // Update the thread in workspace
+                if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+                    appState.workspace.threads[index] = thread
+                }
+
+                // Persist the update
+                if let store = appState.threadStore {
+                    try? await store.save(thread)
                 }
             } else {
-                // Create new conversation
-                let conversation = Conversation(
-                    title: messageInput.prefix(50).description,
-                    messages: [
-                        ConversationMessage(role: .user, content: messageInput)
-                    ],
-                    agentName: "Assistant"
+                // Create new thread scoped to this space
+                var thread = AgentKit.Thread(
+                    title: String(messageInput.prefix(50)),
+                    container: .space(spaceId.rawValue)
                 )
-                appState.workspace.conversations.insert(conversation, at: 0)
+                thread.addMessage(ThreadMessage.user(messageInput))
+                appState.workspace.threads.insert(thread, at: 0)
+
+                // Persist the new thread
+                if let store = appState.threadStore {
+                    try? await store.save(thread)
+                }
             }
 
             messageInput = ""
@@ -430,15 +598,16 @@ struct SpaceDetailView: View {
     }
 }
 
-// MARK: - Message Row
+// MARK: - Thread Message Row
 
-private struct MessageRow: View {
-    let message: ConversationMessage
-    let conversationTitle: String
-    let agentName: String?
+private struct ThreadMessageRow: View {
+    let message: ThreadMessage
+    let threadTitle: String
     let onMemberTap: (String) -> Void
 
     @State private var isHovered = false
+    @State private var showReactionPicker = false
+    @State private var isBookmarked = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -467,7 +636,7 @@ private struct MessageRow: View {
                 }
 
                 // Message content
-                Text(message.content)
+                Text(message.textContent)
                     .font(.body)
                     .textSelection(.enabled)
 
@@ -491,10 +660,48 @@ private struct MessageRow: View {
             // Hover actions
             if isHovered {
                 HStack(spacing: 4) {
-                    MessageActionButton(icon: "face.smiling", tooltip: "React") {}
-                    MessageActionButton(icon: "arrowshape.turn.up.left", tooltip: "Reply") {}
-                    MessageActionButton(icon: "bookmark", tooltip: "Bookmark") {}
-                    MessageActionButton(icon: "ellipsis", tooltip: "More") {}
+                    MessageActionButton(icon: "face.smiling", tooltip: "React") {
+                        showReactionPicker = true
+                    }
+                    .popover(isPresented: $showReactionPicker) {
+                        EmojiPickerView { emoji in
+                            // In a full implementation, this would add the reaction to the message
+                            showReactionPicker = false
+                        }
+                    }
+
+                    MessageActionButton(icon: "arrowshape.turn.up.left", tooltip: "Reply") {
+                        // Copy message content to clipboard for easy reply reference
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(message.textContent, forType: .string)
+                    }
+
+                    MessageActionButton(
+                        icon: isBookmarked ? "bookmark.fill" : "bookmark",
+                        tooltip: isBookmarked ? "Remove bookmark" : "Bookmark"
+                    ) {
+                        isBookmarked.toggle()
+                    }
+
+                    Menu {
+                        Button(action: {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(message.textContent, forType: .string)
+                        }) {
+                            Label("Copy text", systemImage: "doc.on.doc")
+                        }
+                        Divider()
+                        Button(role: .destructive, action: {}) {
+                            Label("Delete message", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 24, height: 24)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                 }
                 .transition(.opacity)
             }
@@ -510,7 +717,7 @@ private struct MessageRow: View {
     }
 
     private var senderName: String {
-        message.role == .user ? "You" : (agentName ?? "Assistant")
+        message.sender.displayName
     }
 
     private var avatarInitial: String {
@@ -571,5 +778,264 @@ private struct ProfileInfoRow: View {
                     .font(.subheadline)
             }
         }
+    }
+}
+
+// MARK: - Search Messages Sheet
+
+private struct SearchMessagesSheet: View {
+    let threads: [AgentKit.Thread]
+    let spaceId: SpaceID?
+    @Binding var searchQuery: String
+    @EnvironmentObject private var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+    @FocusState private var isSearchFocused: Bool
+
+    @State private var searchResults: [SearchResult] = []
+    @State private var isSearching = false
+    @State private var searchTask: Task<Void, Never>?
+
+    /// Search result combining memory search with message data
+    struct SearchResult: Identifiable {
+        let id: String
+        let message: AgentKit.ThreadMessage
+        let threadTitle: String
+        let score: Float
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Search messages...", text: $searchQuery)
+                    .textFieldStyle(.plain)
+                    .focused($isSearchFocused)
+                    .onChange(of: searchQuery) { _, newValue in
+                        performSearch(query: newValue)
+                    }
+
+                if isSearching {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else if !searchQuery.isEmpty {
+                    Button(action: { searchQuery = "" }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                Button("Done") { dismiss() }
+                    .buttonStyle(.bordered)
+            }
+            .padding()
+
+            Divider()
+
+            // Results
+            if searchQuery.isEmpty {
+                ContentUnavailableView(
+                    "Semantic Search",
+                    systemImage: "sparkle.magnifyingglass",
+                    description: Text("Type to search semantically through messages")
+                )
+            } else if isSearching {
+                ProgressView("Searching...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if searchResults.isEmpty {
+                ContentUnavailableView(
+                    "No Results",
+                    systemImage: "doc.text.magnifyingglass",
+                    description: Text("No messages match \"\(searchQuery)\"")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(searchResults) { result in
+                            SearchResultRow(
+                                message: result.message,
+                                threadTitle: result.threadTitle,
+                                query: searchQuery,
+                                score: result.score
+                            )
+                        }
+                    }
+                    .padding()
+                }
+            }
+        }
+        .frame(minWidth: 500, minHeight: 400)
+        .onAppear { isSearchFocused = true }
+    }
+
+    private func performSearch(query: String) {
+        // Cancel any existing search
+        searchTask?.cancel()
+
+        guard !query.isEmpty else {
+            searchResults = []
+            return
+        }
+
+        // Debounce: wait a bit before searching
+        searchTask = Task {
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+
+            await MainActor.run { isSearching = true }
+
+            // Try vector search first if memoryStore is available
+            if let memoryStore = appState.memoryStore {
+                do {
+                    // Build filter for this space
+                    let filter = spaceId.map { id in
+                        MemoryFilter(
+                            spaceIds: [id.rawValue],
+                            sourceTypes: [MemoryFilter.SourceType.thread]
+                        )
+                    } ?? MemoryFilter(sourceTypes: [MemoryFilter.SourceType.thread])
+
+                    let vectorResults = try await memoryStore.search(
+                        query: query,
+                        limit: 20,
+                        threshold: 0.3,
+                        filter: filter
+                    )
+
+                    // Map vector results back to messages
+                    var results: [SearchResult] = []
+                    for vectorResult in vectorResults {
+                        // Extract thread/message IDs from source
+                        if case .thread(let sessionId, let messageId) = vectorResult.item.source {
+                            let msgId = messageId
+                            // Find the matching message in our threads
+                            for thread in threads {
+                                if let message = thread.messages.first(where: {
+                                    $0.id.uuidString == msgId || thread.id.rawValue == sessionId
+                                }) {
+                                    results.append(SearchResult(
+                                        id: msgId,
+                                        message: message,
+                                        threadTitle: thread.title,
+                                        score: vectorResult.score
+                                    ))
+                                    break
+                                }
+                            }
+                        }
+                    }
+
+                    // If vector search returned results, use them
+                    if !results.isEmpty {
+                        await MainActor.run {
+                            self.searchResults = results
+                            self.isSearching = false
+                        }
+                        return
+                    }
+                } catch {
+                    print("Vector search failed, falling back to text: \(error)")
+                }
+            }
+
+            // Fallback to simple text search
+            let lowerQuery = query.lowercased()
+            var fallbackResults: [SearchResult] = []
+
+            for thread in threads {
+                for message in thread.messages {
+                    if message.textContent.lowercased().contains(lowerQuery) {
+                        fallbackResults.append(SearchResult(
+                            id: message.id.uuidString,
+                            message: message,
+                            threadTitle: thread.title,
+                            score: 1.0  // Exact match
+                        ))
+                    }
+                }
+            }
+
+            await MainActor.run {
+                self.searchResults = fallbackResults
+                self.isSearching = false
+            }
+        }
+    }
+}
+
+private struct SearchResultRow: View {
+    let message: AgentKit.ThreadMessage
+    let threadTitle: String
+    let query: String
+    let score: Float
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(message.sender.displayName)
+                    .font(.caption.weight(.medium))
+                Text("in \(threadTitle)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                // Show relevance score for semantic search
+                if score < 1.0 {
+                    Text("\(Int(score * 100))% match")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.quaternary, in: Capsule())
+                }
+
+                Spacer()
+                Text(message.timestamp, style: .relative)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Text(message.textContent)
+                .font(.subheadline)
+                .lineLimit(3)
+        }
+        .padding(10)
+        .background(Color.gray.opacity(0.05), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+// MARK: - Emoji Picker View
+
+private struct EmojiPickerView: View {
+    let onSelect: (String) -> Void
+
+    private let commonEmojis = [
+        "👍", "👎", "❤️", "🎉", "🚀", "✅", "❌", "💡",
+        "🔥", "⭐", "💪", "🙌", "👀", "💬", "📝", "🎯",
+        "✨", "💯", "🤔", "😊", "😂", "🙏", "👏", "🤝"
+    ]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Quick Reactions")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(36)), count: 8), spacing: 4) {
+                ForEach(commonEmojis, id: \.self) { emoji in
+                    Button(action: { onSelect(emoji) }) {
+                        Text(emoji)
+                            .font(.title2)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(width: 36, height: 36)
+                }
+            }
+            .padding(8)
+        }
+        .padding(8)
+        .frame(width: 320)
     }
 }

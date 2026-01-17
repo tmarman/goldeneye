@@ -138,19 +138,19 @@ public final class AgentService: ObservableObject {
     }
 }
 
-// MARK: - Conversation Service Extension
+// MARK: - Thread Service Extension
 
 extension AgentService {
-    /// Continue an existing conversation with a new message
-    public func continueConversation(
-        _ conversation: Conversation,
+    /// Continue an existing thread with a new message
+    public func continueThread(
+        _ thread: AgentKit.Thread,
         with newMessage: String,
         onEvent: @escaping (AgentEvent) -> Void
-    ) async throws -> ConversationMessage {
-        // Build context from conversation history
-        let historyContext = conversation.messages.map { msg in
+    ) async throws -> AgentKit.ThreadMessage {
+        // Build context from thread history
+        let historyContext = thread.messages.map { msg in
             let role = msg.role == .user ? "User" : "Assistant"
-            return "\(role): \(msg.content)"
+            return "\(role): \(msg.textContent)"
         }.joined(separator: "\n")
 
         let contextPrompt = """
@@ -163,10 +163,7 @@ extension AgentService {
         try await sendMessage(newMessage, systemPrompt: contextPrompt, onEvent: onEvent)
 
         // Return the assistant's response
-        return ConversationMessage(
-            role: .assistant,
-            content: streamingContent
-        )
+        return AgentKit.ThreadMessage.assistant(streamingContent)
     }
 }
 

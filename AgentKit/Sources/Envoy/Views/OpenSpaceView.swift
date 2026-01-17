@@ -1,5 +1,7 @@
 import AgentKit
+import AVFoundation
 import EventKit
+import Speech
 import SwiftUI
 
 // MARK: - Open Space View
@@ -14,6 +16,11 @@ struct OpenSpaceView: View {
     @State private var agentSuggestions: [AgentSuggestion] = []
     @State private var isProcessingSuggestions = false
     @FocusState private var isInputFocused: Bool
+
+    // Voice input state
+    @State private var isRecordingVoice = false
+    @State private var voiceTranscript = ""
+    @StateObject private var speechRecognizer = SpeechRecognizer()
 
     private let eventStore = EKEventStore()
 
@@ -269,27 +276,23 @@ struct OpenSpaceView: View {
     @ViewBuilder
     private var captureActionBar: some View {
         HStack(spacing: 12) {
-            // Future: Voice input, drawing tools
+            // Voice input and drawing tools
             HStack(spacing: 8) {
-                Button(action: {}) {
-                    Image(systemName: "mic")
+                Button(action: toggleVoiceRecording) {
+                    Image(systemName: isRecordingVoice ? "mic.fill" : "mic")
                         .font(.title3)
+                        .foregroundStyle(isRecordingVoice ? .red : .secondary)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .disabled(true)
-                .opacity(0.5)
-                .help("Voice input coming soon")
+                .help(isRecordingVoice ? "Stop recording" : "Start voice input")
 
-                Button(action: {}) {
+                Button(action: insertDrawingPlaceholder) {
                     Image(systemName: "scribble")
                         .font(.title3)
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
-                .disabled(true)
-                .opacity(0.5)
-                .help("Drawing coming soon on iPad")
+                .help("Insert drawing placeholder")
             }
 
             Spacer()
@@ -520,6 +523,118 @@ struct OpenSpaceView: View {
             // Calendar access denied or error
             print("Calendar access error: \(error)")
         }
+    }
+
+    // MARK: - Voice Input
+
+    private func toggleVoiceRecording() {
+        if isRecordingVoice {
+            // Stop recording and append transcript to input
+            speechRecognizer.stopRecording()
+            if !speechRecognizer.transcript.isEmpty {
+                if quickInput.isEmpty {
+                    quickInput = speechRecognizer.transcript
+                } else {
+                    quickInput += " " + speechRecognizer.transcript
+                }
+            }
+            isRecordingVoice = false
+        } else {
+            // Start recording
+            speechRecognizer.startRecording()
+            isRecordingVoice = true
+        }
+    }
+
+    // MARK: - Drawing
+
+    private func insertDrawingPlaceholder() {
+        // Insert a placeholder for drawing - on macOS this could open a canvas
+        let timestamp = Date().formatted(date: .omitted, time: .shortened)
+        if quickInput.isEmpty {
+            quickInput = "[Sketch \(timestamp)]"
+        } else {
+            quickInput += " [Sketch \(timestamp)]"
+        }
+    }
+}
+
+// MARK: - Speech Recognizer
+
+/// Simple speech recognizer for voice input
+@MainActor
+class SpeechRecognizer: ObservableObject {
+    @Published var transcript = ""
+    @Published var isRecording = false
+
+    private var audioEngine: AVAudioEngine?
+    private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    private var recognitionTask: SFSpeechRecognitionTask?
+    private let speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
+
+    func startRecording() {
+        // Request authorization if needed
+        SFSpeechRecognizer.requestAuthorization { [weak self] status in
+            Task { @MainActor in
+                guard status == .authorized else {
+                    self?.transcript = "[Voice recognition not authorized]"
+                    return
+                }
+                self?.beginRecording()
+            }
+        }
+    }
+
+    private func beginRecording() {
+        // Cancel any previous task
+        recognitionTask?.cancel()
+        recognitionTask = nil
+
+        // macOS doesn't use AVAudioSession - audio engine works directly
+
+        // Create recognition request
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        guard let recognitionRequest = recognitionRequest else { return }
+        recognitionRequest.shouldReportPartialResults = true
+
+        // Start recognition
+        recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] result, error in
+            Task { @MainActor in
+                if let result = result {
+                    self?.transcript = result.bestTranscription.formattedString
+                }
+                if error != nil || (result?.isFinal ?? false) {
+                    self?.stopRecording()
+                }
+            }
+        }
+
+        // Configure audio engine (macOS doesn't need AVAudioSession)
+        audioEngine = AVAudioEngine()
+        guard let audioEngine = audioEngine else { return }
+
+        let inputNode = audioEngine.inputNode
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
+            self.recognitionRequest?.append(buffer)
+        }
+
+        do {
+            audioEngine.prepare()
+            try audioEngine.start()
+            isRecording = true
+            transcript = ""
+        } catch {
+            transcript = "[Could not start audio engine]"
+        }
+    }
+
+    func stopRecording() {
+        audioEngine?.stop()
+        audioEngine?.inputNode.removeTap(onBus: 0)
+        recognitionRequest?.endAudio()
+        recognitionTask?.cancel()
+        isRecording = false
     }
 }
 

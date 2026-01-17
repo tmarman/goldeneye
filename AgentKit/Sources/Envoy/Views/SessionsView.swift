@@ -169,53 +169,6 @@ struct SessionsView: View {
         sessions = allSessions
         isLoading = false
     }
-
-    private func mockSessions() -> [DeviceSession] {
-        [
-            DeviceSession(
-                info: SessionInfo(
-                    id: "session-1",
-                    taskId: "task-abc",
-                    cli: .claudeCode,
-                    status: .running,
-                    createdAt: Date().addingTimeInterval(-1800),
-                    outputSize: 15420,
-                    exitCode: nil
-                ),
-                deviceId: "local-device",
-                deviceName: "Tim's MacBook Pro",
-                isLocal: true
-            ),
-            DeviceSession(
-                info: SessionInfo(
-                    id: "session-2",
-                    taskId: "task-def",
-                    cli: .claudeCode,
-                    status: .completed,
-                    createdAt: Date().addingTimeInterval(-86400),
-                    outputSize: 45230,
-                    exitCode: 0
-                ),
-                deviceId: "local-device",
-                deviceName: "Tim's MacBook Pro",
-                isLocal: true
-            ),
-            DeviceSession(
-                info: SessionInfo(
-                    id: "session-3",
-                    taskId: "task-ghi",
-                    cli: .claudeCode,
-                    status: .running,
-                    createdAt: Date().addingTimeInterval(-3600),
-                    outputSize: 8920,
-                    exitCode: nil
-                ),
-                deviceId: "home-mac",
-                deviceName: "Home Mac Studio",
-                isLocal: false
-            )
-        ]
-    }
 }
 
 // MARK: - CLI Session Row
@@ -475,38 +428,38 @@ struct CLISessionDetailView: View {
     }
 
     private func loadOutput() async {
-        // Mock output for development
-        outputText = """
-        \u{001B}[36m╭─────────────────────────────────────────────╮\u{001B}[0m
-        \u{001B}[36m│\u{001B}[0m  \u{001B}[1m\u{001B}[35mClaude Code\u{001B}[0m                                \u{001B}[36m│\u{001B}[0m
-        \u{001B}[36m╰─────────────────────────────────────────────╯\u{001B}[0m
+        // Load real output from SessionManager
+        guard let cliSession = await SessionManager.shared.getSession(session.info.id) else {
+            outputText = "Session not found or no longer available."
+            return
+        }
 
-        \u{001B}[90m>\u{001B}[0m Reading file: \u{001B}[33mPackage.swift\u{001B}[0m
-        \u{001B}[90m>\u{001B}[0m Analyzing project structure...
+        // Get existing output buffer
+        let buffer = await cliSession.getOutputBuffer()
+        if !buffer.isEmpty, let text = String(data: buffer, encoding: .utf8) {
+            outputText = text
+        } else {
+            outputText = ""
+        }
 
-        I'll help you implement the CLI Runner Agent. Let me start by
-        examining the existing codebase structure.
-
-        \u{001B}[32m✓\u{001B}[0m Found AgentKit module
-        \u{001B}[32m✓\u{001B}[0m Found existing Review system
-        \u{001B}[32m✓\u{001B}[0m Found A2A protocol implementation
-
-        \u{001B}[90m>\u{001B}[0m Creating new files...
-
-        \u{001B}[36m┌─ CLIRunnerTypes.swift ─────────────────────────┐\u{001B}[0m
-        \u{001B}[36m│\u{001B}[0m public enum CLIType: String, Codable {        \u{001B}[36m│\u{001B}[0m
-        \u{001B}[36m│\u{001B}[0m     case claudeCode = "claude-code"           \u{001B}[36m│\u{001B}[0m
-        \u{001B}[36m│\u{001B}[0m     case codex = "codex"                      \u{001B}[36m│\u{001B}[0m
-        \u{001B}[36m│\u{001B}[0m     case geminiCLI = "gemini-cli"             \u{001B}[36m│\u{001B}[0m
-        \u{001B}[36m│\u{001B}[0m }                                             \u{001B}[36m│\u{001B}[0m
-        \u{001B}[36m└─────────────────────────────────────────────────┘\u{001B}[0m
-
-        """
-
-        // In real implementation, would stream from CLISession
+        // Stream new output if session is running
         if session.info.status == .running {
-            // Start streaming
             isStreaming = true
+            for await output in await cliSession.outputStream() {
+                switch output.type {
+                case .stdout, .stderr:
+                    if let data = output.data,
+                       let text = String(data: data, encoding: .utf8) {
+                        outputText += text
+                    }
+                case .exit(let code):
+                    outputText += "\n\n[Process exited with code \(code)]\n"
+                    isStreaming = false
+                case .terminated:
+                    outputText += "\n\n[Session terminated]\n"
+                    isStreaming = false
+                }
+            }
         }
     }
 

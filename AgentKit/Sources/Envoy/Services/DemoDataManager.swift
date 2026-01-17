@@ -52,28 +52,28 @@ public final class DemoDataManager: ObservableObject {
 
     // MARK: - Data Loading
 
-    /// Load conversations from the data folder
-    public func loadConversations() async -> [Conversation] {
-        let conversationsPath = currentDataPath.appendingPathComponent("conversations.json")
+    /// Load threads from the data folder
+    public func loadThreads() async -> [AgentKit.Thread] {
+        let threadsPath = currentDataPath.appendingPathComponent("threads.json")
 
-        guard FileManager.default.fileExists(atPath: conversationsPath.path) else {
+        guard FileManager.default.fileExists(atPath: threadsPath.path) else {
             return []
         }
 
         do {
-            let data = try Data(contentsOf: conversationsPath)
+            let data = try Data(contentsOf: threadsPath)
             let decoder = JSONDecoder()
             decoder.dateDecodingStrategy = .iso8601
-            return try decoder.decode([Conversation].self, from: data)
+            return try decoder.decode([AgentKit.Thread].self, from: data)
         } catch {
-            print("Failed to load conversations: \(error)")
+            print("Failed to load threads: \(error)")
             return []
         }
     }
 
-    /// Save conversations to the data folder
-    public func saveConversations(_ conversations: [Conversation]) async {
-        let conversationsPath = currentDataPath.appendingPathComponent("conversations.json")
+    /// Save threads to the data folder
+    public func saveThreads(_ threads: [AgentKit.Thread]) async {
+        let threadsPath = currentDataPath.appendingPathComponent("threads.json")
 
         // Ensure directory exists
         try? FileManager.default.createDirectory(at: currentDataPath, withIntermediateDirectories: true)
@@ -82,10 +82,10 @@ public final class DemoDataManager: ObservableObject {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(conversations)
-            try data.write(to: conversationsPath)
+            let data = try encoder.encode(threads)
+            try data.write(to: threadsPath)
         } catch {
-            print("Failed to save conversations: \(error)")
+            print("Failed to save threads: \(error)")
         }
     }
 
@@ -110,167 +110,18 @@ public final class DemoDataManager: ObservableObject {
 
     // MARK: - Demo Data Generation
 
-    /// Generate sample demo data for a new demo folder
-    public func generateDemoData(at path: URL) async throws {
-        // Create the directory
+    /// Initialize a demo data folder with empty data files
+    public func initializeDemoFolder(at path: URL) async throws {
         try FileManager.default.createDirectory(at: path, withIntermediateDirectories: true)
 
-        // Generate conversations
-        let conversations = generateDemoConversations()
+        // Create empty conversations file
         let conversationsPath = path.appendingPathComponent("conversations.json")
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let conversationData = try encoder.encode(conversations)
-        try conversationData.write(to: conversationsPath)
+        try "[]".data(using: .utf8)?.write(to: conversationsPath)
 
-        print("Generated demo data at: \(path.path)")
-    }
+        // Create empty documents file
+        let documentsPath = path.appendingPathComponent("documents.json")
+        try "[]".data(using: .utf8)?.write(to: documentsPath)
 
-    // MARK: - Demo Conversations
-
-    private func generateDemoConversations() -> [Conversation] {
-        [
-            // Recent coding assistance conversation
-            Conversation(
-                title: "Refactoring UserService",
-                messages: [
-                    ConversationMessage(
-                        role: .user,
-                        content: "Can you help me refactor the UserService class? It's gotten too large and handles too many responsibilities.",
-                        timestamp: Date().addingTimeInterval(-3600)
-                    ),
-                    ConversationMessage(
-                        role: .assistant,
-                        content: """
-                        I'd be happy to help you refactor UserService. Based on what you've described, it sounds like the class violates the Single Responsibility Principle.
-
-                        Here's my suggested approach:
-
-                        1. **Split by domain**: Extract authentication logic into `AuthenticationService`
-                        2. **Separate concerns**: Move profile management to `UserProfileService`
-                        3. **Extract validation**: Create `UserValidationService` for validation rules
-
-                        Would you like me to start with the authentication extraction? That's usually the most impactful change.
-                        """,
-                        timestamp: Date().addingTimeInterval(-3500)
-                    ),
-                    ConversationMessage(
-                        role: .user,
-                        content: "Yes, let's start with authentication. The class currently handles login, logout, token refresh, and password reset.",
-                        timestamp: Date().addingTimeInterval(-3400)
-                    ),
-                    ConversationMessage(
-                        role: .assistant,
-                        content: """
-                        Here's a clean `AuthenticationService` extraction:
-
-                        ```swift
-                        final class AuthenticationService {
-                            private let tokenStore: TokenStore
-                            private let apiClient: APIClient
-
-                            func login(email: String, password: String) async throws -> User
-                            func logout() async throws
-                            func refreshToken() async throws -> Token
-                            func requestPasswordReset(email: String) async throws
-                        }
-                        ```
-
-                        This gives you:
-                        - Clear single responsibility
-                        - Easy to test in isolation
-                        - Injectable dependencies
-
-                        Should I also show the interface changes needed in UserService?
-                        """,
-                        metadata: MessageMetadata(model: "Qwen2.5-7B-Instruct-4bit", provider: "MLX", tokens: 156, latency: 2.3),
-                        timestamp: Date().addingTimeInterval(-3300)
-                    )
-                ],
-                agentName: nil,
-                modelId: "mlx-community/Qwen2.5-7B-Instruct-4bit",
-                providerId: nil
-            ),
-
-            // Quick questions conversation
-            Conversation(
-                title: "Swift async/await questions",
-                messages: [
-                    ConversationMessage(
-                        role: .user,
-                        content: "What's the difference between Task and TaskGroup in Swift?",
-                        timestamp: Date().addingTimeInterval(-86400)
-                    ),
-                    ConversationMessage(
-                        role: .assistant,
-                        content: """
-                        **Task** - Creates a single concurrent unit of work:
-                        ```swift
-                        Task {
-                            await doSomething()
-                        }
-                        ```
-
-                        **TaskGroup** - Manages multiple concurrent child tasks that you can await together:
-                        ```swift
-                        await withTaskGroup(of: Result.self) { group in
-                            for item in items {
-                                group.addTask { await process(item) }
-                            }
-                            // Collect results...
-                        }
-                        ```
-
-                        Key differences:
-                        - Task: fire-and-forget or await a single result
-                        - TaskGroup: coordinate multiple parallel tasks, collect results
-                        - TaskGroup automatically cancels children if parent is cancelled
-                        """,
-                        metadata: MessageMetadata(model: "Qwen2.5-7B-Instruct-4bit", provider: "MLX", tokens: 134, latency: 1.8),
-                        timestamp: Date().addingTimeInterval(-86300)
-                    )
-                ],
-                modelId: "mlx-community/Qwen2.5-7B-Instruct-4bit"
-            ),
-
-            // Planning conversation
-            Conversation(
-                title: "Q1 product roadmap brainstorm",
-                messages: [
-                    ConversationMessage(
-                        role: .user,
-                        content: "Help me brainstorm features for our Q1 product roadmap. We're building a developer productivity tool.",
-                        timestamp: Date().addingTimeInterval(-172800)
-                    ),
-                    ConversationMessage(
-                        role: .assistant,
-                        content: """
-                        Here are feature ideas organized by impact and effort:
-
-                        **High Impact, Lower Effort:**
-                        - Keyboard shortcuts customization
-                        - Command palette (Cmd+K) with fuzzy search
-                        - Quick project switching
-
-                        **High Impact, Higher Effort:**
-                        - AI-powered code suggestions
-                        - Integrated terminal with session persistence
-                        - Git workflow automation
-
-                        **Nice to Have:**
-                        - Theme customization
-                        - Snippet library with sync
-                        - Integration with popular tools (Jira, Linear)
-
-                        Which area interests you most? I can dive deeper.
-                        """,
-                        metadata: MessageMetadata(model: "Llama-3.2-3B-Instruct-4bit", provider: "MLX", tokens: 142, latency: 1.2),
-                        timestamp: Date().addingTimeInterval(-172700)
-                    )
-                ],
-                modelId: "mlx-community/Llama-3.2-3B-Instruct-4bit"
-            )
-        ]
+        print("Initialized demo folder at: \(path.path)")
     }
 }

@@ -12,7 +12,7 @@ public struct CoachingSession: Identifiable, Codable, Sendable {
     public var domain: CoachingDomain
     public var phase: CoachingPhase
     public var goal: String?
-    public var messages: [ConversationMessage]
+    public var messages: [ThreadMessage]
     public var notes: [CoachingNote]
     public var progress: CoachingProgress
     public var agentId: AgentID?
@@ -26,7 +26,7 @@ public struct CoachingSession: Identifiable, Codable, Sendable {
         domain: CoachingDomain,
         phase: CoachingPhase = .learn,
         goal: String? = nil,
-        messages: [ConversationMessage] = [],
+        messages: [ThreadMessage] = [],
         notes: [CoachingNote] = [],
         progress: CoachingProgress = CoachingProgress(),
         agentId: AgentID? = nil

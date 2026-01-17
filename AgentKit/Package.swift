@@ -48,6 +48,9 @@ let package = Package(
         // VecturaKit for on-device vector database / RAG
         // TODO: Re-enable once API is tested and integrated
         // .package(url: "https://github.com/rryam/VecturaKit.git", from: "2.3.1"),
+
+        // Markdown rendering for chat messages
+        .package(url: "https://github.com/gonzalezreal/swift-markdown-ui.git", from: "2.4.0"),
     ],
     targets: [
         // MARK: - Core Library
@@ -60,6 +63,7 @@ let package = Package(
                 .product(name: "MLXNN", package: "mlx-swift"),
                 .product(name: "MLXRandom", package: "mlx-swift"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                // .product(name: "MLXVLM", package: "mlx-swift-lm"),  // TODO: Re-enable when upstream bug #35 is fixed
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 // .product(name: "VecturaKit", package: "VecturaKit"),  // TODO: Re-enable
             ],
@@ -92,10 +96,12 @@ let package = Package(
             name: "Envoy",
             dependencies: [
                 "AgentKit",
+                .product(name: "MarkdownUI", package: "swift-markdown-ui"),
             ],
             path: "Sources/Envoy",
             exclude: [
-                "Envoy.entitlements"  // Xcode-specific, not needed for SPM build
+                "Envoy.entitlements",  // Xcode-specific, not needed for SPM build
+                "Info.plist"  // Handled by SPM automatically
             ],
             resources: [
                 .process("Resources")

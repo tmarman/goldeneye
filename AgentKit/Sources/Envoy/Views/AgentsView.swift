@@ -197,19 +197,18 @@ struct AgentRosterRow: View {
     }
 
     private func startChatWithAgent() {
-        // Find or create conversation with this agent
-        if let conv = appState.workspace.conversations.first(where: { $0.agentName == agent.name }) {
-            appState.selectedConversationId = conv.id
-            appState.selectedSidebarItem = .conversations
+        // Find or create thread with this agent
+        if let thread = appState.workspace.threads.first(where: { $0.container.agentName == agent.name }) {
+            appState.selectedThreadId = thread.id
+            appState.selectedSidebarItem = .threads
         } else {
-            let newConv = Conversation(
+            let newThread = AgentKit.Thread(
                 title: "Chat with \(agent.name)",
-                messages: [],
-                agentName: agent.name
+                container: .agent(agent.name)
             )
-            appState.workspace.conversations.insert(newConv, at: 0)
-            appState.selectedConversationId = newConv.id
-            appState.selectedSidebarItem = .conversations
+            appState.workspace.threads.insert(newThread, at: 0)
+            appState.selectedThreadId = newThread.id
+            appState.selectedSidebarItem = .threads
         }
     }
 

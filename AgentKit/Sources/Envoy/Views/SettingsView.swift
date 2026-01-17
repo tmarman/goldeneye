@@ -228,6 +228,7 @@ struct SettingsCard<Content: View>: View {
 // MARK: - General Settings
 
 struct GeneralSettingsContent: View {
+    @EnvironmentObject private var appState: AppState
     @AppStorage("launchAtLogin") private var launchAtLogin = false
     @AppStorage("showInMenuBar") private var showInMenuBar = true
     @AppStorage("showInDock") private var showInDock = true
@@ -258,6 +259,22 @@ struct GeneralSettingsContent: View {
                     Toggle("Enable Notifications", isOn: $notificationsEnabled)
                     Toggle("Play Sounds", isOn: $soundEnabled)
                         .disabled(!notificationsEnabled)
+                }
+            }
+
+            SettingsCard(title: "Getting Started", icon: "sparkles") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("View the onboarding guide to learn about Envoy's features.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+
+                    Button(action: { appState.showOnboarding = true }) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "play.circle.fill")
+                            Text("Show Onboarding")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
                 }
             }
         }
@@ -378,64 +395,77 @@ struct ProvidersSettingsSection: View {
     @Binding var editingProvider: ProviderConfig?
     @Binding var showAddOllamaServer: Bool
 
+    /// Access the shared provider manager
+    private var providerManager: ProviderConfigManager { ProviderConfigManager.shared }
+
+    /// Extract model count from provider status
+    private func modelCount(for provider: ProviderConfig) -> Int? {
+        if case .available(let count) = providerManager.providerStatus[provider.id] {
+            return count
+        }
+        return nil
+    }
+
+    /// Available providers that are enabled and have models
+    private var availableProviders: [ProviderConfig] {
+        providerManager.providers.filter { provider in
+            guard provider.isEnabled else { return false }
+            if case .available = providerManager.providerStatus[provider.id] {
+                return true
+            }
+            return false
+        }
+    }
+
     var body: some View {
         VStack(spacing: 16) {
-            // Configured providers
+            // Default Orchestrator Model - shown when providers are available
+            if !availableProviders.isEmpty {
+                DefaultModelSection(availableProviders: availableProviders)
+            }
+
+            // Configured providers from real ProviderConfigManager
             SettingsCard(title: "Configured Providers", icon: "checkmark.circle") {
                 VStack(spacing: 0) {
-                    // Sample data - would use actual provider manager
-                    ProviderSettingsRow(
-                        name: "Local MLX Models",
-                        icon: "apple.logo",
-                        iconColor: .primary,
-                        subtitle: "Run models locally on Apple Silicon",
-                        modelCount: 1,
-                        isEnabled: true
-                    )
+                    if providerManager.providers.isEmpty {
+                        HStack {
+                            Spacer()
+                            VStack(spacing: 8) {
+                                Image(systemName: "cpu")
+                                    .font(.title)
+                                    .foregroundStyle(.secondary)
+                                Text("No providers configured")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding()
+                            Spacer()
+                        }
+                    } else {
+                        ForEach(Array(providerManager.providers.enumerated()), id: \.element.id) { index, provider in
+                            ProviderSettingsRow(
+                                name: provider.name,
+                                icon: provider.type.icon,
+                                iconColor: provider.type.color,
+                                subtitle: provider.type.description,
+                                modelCount: modelCount(for: provider),
+                                isEnabled: provider.isEnabled,
+                                selectedModel: provider.selectedModel,
+                                onConfigure: {
+                                    editingProvider = provider
+                                }
+                            )
 
-                    Divider().padding(.leading, 44)
-
-                    ProviderSettingsRow(
-                        name: "Ollama",
-                        icon: "hare",
-                        iconColor: .blue,
-                        subtitle: "Local models via Ollama server",
-                        modelCount: 5,
-                        isEnabled: true,
-                        selectedModel: "hf.co/unsloth/GLM-4.7-GGUF:latest",
-                        onConfigure: { /* show config */ }
-                    )
-
-                    Divider().padding(.leading, 44)
-
-                    ProviderSettingsRow(
-                        name: "Anthropic Claude",
-                        icon: "sparkle",
-                        iconColor: .orange,
-                        subtitle: "Claude Sonnet, Opus, Haiku",
-                        isEnabled: false
-                    )
-
-                    Divider().padding(.leading, 44)
-
-                    ProviderSettingsRow(
-                        name: "OpenAI GPT",
-                        icon: "brain",
-                        iconColor: .green,
-                        subtitle: "GPT-4, GPT-3.5, and more",
-                        isEnabled: false
-                    )
-
-                    Divider().padding(.leading, 44)
-
-                    ProviderSettingsRow(
-                        name: "LM Studio",
-                        icon: "desktopcomputer",
-                        iconColor: .purple,
-                        subtitle: "Local models via LM Studio",
-                        isEnabled: true
-                    )
+                            if index < providerManager.providers.count - 1 {
+                                Divider().padding(.leading, 44)
+                            }
+                        }
+                    }
                 }
+            }
+            .task {
+                // Check provider status on appear
+                await providerManager.checkAllProviders()
             }
 
             // Add more providers
@@ -486,6 +516,74 @@ struct ProvidersSettingsSection: View {
                     .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+}
+
+// MARK: - Default Model Section
+
+/// Section for selecting the default orchestrator model
+struct DefaultModelSection: View {
+    let availableProviders: [ProviderConfig]
+    @Environment(ChatService.self) private var chatService
+    @AppStorage("defaultProviderId") private var defaultProviderId: String = ""
+
+    var body: some View {
+        SettingsCard(title: "Default Model", icon: "star.fill") {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("This model will be used for new conversations and the onboarding experience.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("Default Provider", selection: $defaultProviderId) {
+                    Text("Auto (first available)").tag("")
+                    ForEach(availableProviders) { provider in
+                        HStack {
+                            Image(systemName: provider.type.icon)
+                            Text(provider.name)
+                            if let model = provider.selectedModel {
+                                Text("(\(model))")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .tag(provider.id.uuidString)
+                    }
+                }
+                .pickerStyle(.menu)
+                .onChange(of: defaultProviderId) { _, newValue in
+                    Task {
+                        await selectDefaultProvider(id: newValue)
+                    }
+                }
+
+                // Current status
+                HStack {
+                    if chatService.isReady {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                        Text("Using: \(chatService.providerDescription)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Image(systemName: "exclamationmark.circle")
+                            .foregroundStyle(.orange)
+                        Text("No model selected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    private func selectDefaultProvider(id: String) async {
+        if id.isEmpty {
+            // Auto-select first available
+            if let first = availableProviders.first {
+                try? await chatService.selectProvider(first)
+            }
+        } else if let provider = availableProviders.first(where: { $0.id.uuidString == id }) {
+            try? await chatService.selectProvider(provider)
         }
     }
 }
@@ -677,6 +775,36 @@ struct AddOllamaServerSheet: View {
 struct OnDeviceModelsSection: View {
     @Binding var showImportHuggingFace: Bool
 
+    /// Calculate actual storage used by models
+    private var modelsStorageSize: String {
+        let modelsPath = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first!.appendingPathComponent("Envoy/Models")
+
+        guard FileManager.default.fileExists(atPath: modelsPath.path) else {
+            return "0 MB"
+        }
+
+        var totalSize: Int64 = 0
+        if let enumerator = FileManager.default.enumerator(
+            at: modelsPath,
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            for case let fileURL as URL in enumerator {
+                if let fileSize = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                    totalSize += Int64(fileSize)
+                }
+            }
+        }
+
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useGB, .useMB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: totalSize)
+    }
+
     var body: some View {
         VStack(spacing: 16) {
             // System info banner
@@ -685,12 +813,30 @@ struct OnDeviceModelsSection: View {
             // Installed models
             SettingsCard(title: "Installed Models", icon: "checkmark.circle.fill") {
                 VStack(spacing: 0) {
-                    // Sample installed models
-                    InstalledModelRow(
-                        name: "Qwen 2.5 7B",
-                        size: "4.5 GB",
-                        isRecommended: true
-                    )
+                    if modelsStorageSize == "0 MB" || modelsStorageSize == "Zero KB" {
+                        // No models installed
+                        HStack {
+                            Image(systemName: "tray")
+                                .font(.title2)
+                                .foregroundStyle(.secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("No models installed")
+                                    .font(.subheadline)
+                                Text("Download a model below to get started")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(.vertical, 8)
+                    } else {
+                        // Show actual storage as placeholder until we have model enumeration
+                        InstalledModelRow(
+                            name: "Local Models",
+                            size: modelsStorageSize,
+                            isRecommended: false
+                        )
+                    }
                 }
             }
 
@@ -752,8 +898,8 @@ struct OnDeviceModelsSection: View {
             SettingsCard(title: "Storage", icon: "externaldrive") {
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("4.5 GB used")
-                            .font(.headline)
+                        Text("\(modelsStorageSize) used")
+                            .font(.subheadline.weight(.medium))
                         Text("Models stored in ~/Library/Application Support/Envoy/Models")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -921,14 +1067,218 @@ struct ModelFamilyCard: View {
     }
 }
 
-// MARK: - Provider Edit Sheet (placeholder)
+// MARK: - Provider Edit Sheet
 
 struct ProviderEditSheet: View {
     let provider: ProviderConfig
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var name: String = ""
+    @State private var isEnabled: Bool = true
+    @State private var apiKey: String = ""
+    @State private var serverURL: String = ""
+    @State private var selectedModel: String = ""
+    @State private var isTestingConnection = false
+    @State private var connectionStatus: ConnectionStatus = .unknown
+
+    enum ConnectionStatus {
+        case unknown, success, failed(String)
+    }
 
     var body: some View {
-        Text("Edit \(provider.name)")
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Configure \(provider.type.rawValue)")
+                        .font(.headline)
+                    Text(provider.type.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button("Cancel") { dismiss() }
+                    .buttonStyle(.bordered)
+
+                Button("Save") { saveChanges() }
+                    .buttonStyle(.borderedProminent)
+            }
             .padding()
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Provider icon and status
+                    HStack(spacing: 16) {
+                        Image(systemName: provider.type.icon)
+                            .font(.largeTitle)
+                            .foregroundStyle(provider.type.color)
+                            .frame(width: 48, height: 48)
+                            .background(provider.type.color.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            TextField("Provider Name", text: $name)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.headline)
+
+                            Toggle("Enabled", isOn: $isEnabled)
+                                .toggleStyle(.switch)
+                                .controlSize(.small)
+                        }
+                    }
+
+                    Divider()
+
+                    // Connection settings (for providers that need them)
+                    if provider.type.requiresServerURL {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Server URL")
+                                .font(.subheadline.weight(.medium))
+                            TextField("http://localhost:11434", text: $serverURL)
+                                .textFieldStyle(.roundedBorder)
+                            Text("The URL where the \(provider.type.rawValue) server is running")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    // API Key (for cloud providers)
+                    if provider.type.requiresAPIKey {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("API Key")
+                                .font(.subheadline.weight(.medium))
+                            SecureField("sk-...", text: $apiKey)
+                                .textFieldStyle(.roundedBorder)
+                            Text("Your \(provider.type.rawValue) API key")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    // Model selection
+                    if !provider.availableModels.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Default Model")
+                                .font(.subheadline.weight(.medium))
+                            Picker("Model", selection: $selectedModel) {
+                                Text("None").tag("")
+                                ForEach(provider.availableModels, id: \.self) { model in
+                                    Text(model).tag(model)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                        }
+                    }
+
+                    Divider()
+
+                    // Connection test
+                    HStack {
+                        Button(action: testConnection) {
+                            if isTestingConnection {
+                                ProgressView()
+                                    .scaleEffect(0.7)
+                            } else {
+                                Label("Test Connection", systemImage: "network")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isTestingConnection)
+
+                        Spacer()
+
+                        switch connectionStatus {
+                        case .unknown:
+                            EmptyView()
+                        case .success:
+                            Label("Connected", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        case .failed(let error):
+                            Label(error, systemImage: "xmark.circle.fill")
+                                .foregroundStyle(.red)
+                                .font(.caption)
+                        }
+                    }
+
+                    // Provider info
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Provider Info")
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
+                        Text("Created: \(provider.createdAt.formatted(date: .abbreviated, time: .shortened))")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        if let lastUsed = provider.lastUsed {
+                            Text("Last used: \(lastUsed.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+                .padding()
+            }
+        }
+        .frame(width: 450, height: 500)
+        .onAppear {
+            // Initialize state from provider
+            name = provider.name
+            isEnabled = provider.isEnabled
+            apiKey = provider.apiKey ?? ""
+            serverURL = provider.serverURL ?? provider.type.defaultServerURL ?? ""
+            selectedModel = provider.selectedModel ?? ""
+        }
+    }
+
+    private func testConnection() {
+        isTestingConnection = true
+        connectionStatus = .unknown
+
+        Task {
+            // Simulate connection test
+            try? await Task.sleep(for: .seconds(1))
+
+            await MainActor.run {
+                // For local providers, check if server is reachable
+                if provider.type == .ollama || provider.type == .lmStudio {
+                    // Simple check - in a real implementation, we'd ping the server
+                    if !serverURL.isEmpty && serverURL.hasPrefix("http") {
+                        connectionStatus = .success
+                    } else {
+                        connectionStatus = .failed("Invalid URL")
+                    }
+                } else if provider.type == .appleFoundation {
+                    connectionStatus = .success
+                } else if provider.type.requiresAPIKey {
+                    if apiKey.isEmpty {
+                        connectionStatus = .failed("API key required")
+                    } else {
+                        connectionStatus = .success
+                    }
+                } else {
+                    connectionStatus = .success
+                }
+                isTestingConnection = false
+            }
+        }
+    }
+
+    private func saveChanges() {
+        // Create updated provider config
+        var updatedProvider = provider
+        updatedProvider.name = name
+        updatedProvider.isEnabled = isEnabled
+        updatedProvider.apiKey = apiKey.isEmpty ? nil : apiKey
+        updatedProvider.serverURL = serverURL.isEmpty ? nil : serverURL
+        updatedProvider.selectedModel = selectedModel.isEmpty ? nil : selectedModel
+
+        // Update in provider manager
+        ProviderConfigManager.shared.updateProvider(updatedProvider)
+
+        dismiss()
     }
 }
 
@@ -955,7 +1305,6 @@ struct LLMSettingsContent: View {
                     Text("Apple Intelligence").tag("apple-intelligence")
                     Text("Ollama").tag("ollama")
                     Text("LM Studio").tag("lmstudio")
-                    Text("Mock (Testing)").tag("mock")
                 }
                 .pickerStyle(.segmented)
                 .onChange(of: llmProvider) { _, _ in
@@ -969,8 +1318,6 @@ struct LLMSettingsContent: View {
                 ollamaSettings
             } else if llmProvider == "lmstudio" {
                 lmStudioSettings
-            } else {
-                mockProviderSettings
             }
         }
         .onAppear {
@@ -1253,20 +1600,6 @@ struct LLMSettingsContent: View {
                     .textFieldStyle(.roundedBorder)
 
                 Text("Enter the model identifier as shown in LM Studio")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var mockProviderSettings: some View {
-        SettingsCard(title: "Testing Mode", icon: "testtube.2") {
-            VStack(alignment: .leading, spacing: 8) {
-                Label("Mock provider enabled", systemImage: "info.circle")
-                    .foregroundStyle(.orange)
-
-                Text("Returns canned responses for testing the UI without a real LLM.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1601,10 +1934,7 @@ struct ServerLogsView: View {
 struct ExtensionsSettingsContent: View {
     @State private var nativeTools: [ExtensionItem] = ExtensionItem.nativeTools
     @State private var shortcuts: [ExtensionItem] = []
-    @State private var apps: [ExtensionItem] = []
     @State private var isDiscoveringShortcuts = false
-    @State private var isDiscoveringApps = false
-    @State private var showAddAppSheet = false
 
     var body: some View {
         VStack(spacing: 16) {
@@ -1708,60 +2038,44 @@ struct ExtensionsSettingsContent: View {
                 }
             }
 
-            // Apps Section (AppIntents)
-            SettingsCard(title: "Apps", icon: "app.badge") {
+            // App Integration Info
+            SettingsCard(title: "Third-Party Apps", icon: "app.badge") {
                 VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "info.circle")
+                            .font(.title3)
+                            .foregroundStyle(.blue)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("App Integration via Shortcuts")
+                                .font(.subheadline.weight(.medium))
+                            Text("To integrate third-party apps, create Shortcuts in the Shortcuts app that perform the actions you want, then enable them above.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.vertical, 4)
+
+                    Divider()
+
                     HStack {
-                        Text("Apps with actions agents can perform")
+                        Text("macOS does not allow apps to discover other apps' capabilities directly. Use Shortcuts as the bridge between Envoy and your favorite apps.")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.tertiary)
 
                         Spacer()
 
-                        Button(action: { showAddAppSheet = true }) {
-                            Label("Add App", systemImage: "plus")
-                                .font(.caption)
+                        Button("Open Shortcuts") {
+                            NSWorkspace.shared.open(URL(string: "shortcuts://")!)
                         }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.bordered)
                         .controlSize(.small)
-                    }
-
-                    if apps.isEmpty {
-                        HStack {
-                            Spacer()
-                            VStack(spacing: 8) {
-                                Image(systemName: "app.badge")
-                                    .font(.title)
-                                    .foregroundStyle(.secondary)
-                                Text("No apps added")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text("Add apps that support AppIntents")
-                                    .font(.caption2)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding()
-                            Spacer()
-                        }
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach($apps) { $app in
-                                AppToggleRow(item: $app)
-                                if app.id != apps.last?.id {
-                                    Divider()
-                                        .padding(.leading, 44)
-                                }
-                            }
-                        }
                     }
                 }
             }
         }
         .task {
             await discoverShortcuts()
-        }
-        .sheet(isPresented: $showAddAppSheet) {
-            AddAppSheet(apps: $apps)
         }
     }
 
@@ -1823,14 +2137,28 @@ struct ExtensionsSettingsContent: View {
 struct IntegrationsSettingsContent: View {
     @EnvironmentObject private var appState: AppState
 
-    @AppStorage("slackToken") private var slackToken: String = ""
+    // Slack tokens (bot + user)
+    @AppStorage("slackBotToken") private var slackBotToken: String = ""
+    @AppStorage("slackUserToken") private var slackUserToken: String = ""
+    // Legacy migration
+    @AppStorage("slackToken") private var legacySlackToken: String = ""
+
     @AppStorage("quipToken") private var quipToken: String = ""
 
-    @State private var tempSlackToken: String = ""
+    @State private var tempSlackBotToken: String = ""
+    @State private var tempSlackUserToken: String = ""
     @State private var tempQuipToken: String = ""
     @State private var slackStatus: IntegrationStatus = .notConfigured
+    @State private var slackHasBotToken = false
+    @State private var slackHasUserToken = false
     @State private var quipStatus: IntegrationStatus = .notConfigured
     @State private var isTesting = false
+
+    // Apple integration toggles
+    @AppStorage("appleRemindersEnabled") private var remindersEnabled: Bool = false
+    @AppStorage("appleNotesEnabled") private var notesEnabled: Bool = false
+    @AppStorage("appleMailEnabled") private var mailEnabled: Bool = false
+    @AppStorage("appleMessagesEnabled") private var messagesEnabled: Bool = false
 
     enum IntegrationStatus {
         case notConfigured
@@ -1876,33 +2204,62 @@ struct IntegrationsSettingsContent: View {
             // Slack Integration
             SettingsCard(title: "Slack", icon: "bubble.left.and.bubble.right") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("Connect to Slack to send messages, search channels, and interact with your workspace.")
+                    Text("Connect to Slack with bot and/or user tokens. Bot tokens post as your app; user tokens access DMs and post as you.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    HStack(spacing: 8) {
-                        SecureField("Bot Token (xoxb-...)", text: $tempSlackToken)
+                    // Bot Token
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("Bot Token")
+                                .font(.caption.weight(.medium))
+                            if slackHasBotToken {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.green)
+                            }
+                        }
+                        SecureField("xoxb-...", text: $tempSlackBotToken)
                             .textFieldStyle(.roundedBorder)
+                    }
 
-                        statusBadge(slackStatus)
+                    // User Token
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text("User Token")
+                                .font(.caption.weight(.medium))
+                            Text("(optional)")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                            if slackHasUserToken {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.green)
+                            }
+                        }
+                        SecureField("xoxp-...", text: $tempSlackUserToken)
+                            .textFieldStyle(.roundedBorder)
                     }
 
                     HStack {
-                        Text("Get a token from")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-
-                        Link("api.slack.com/apps", destination: URL(string: "https://api.slack.com/apps")!)
-                            .font(.caption)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Get tokens from")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                            Link("api.slack.com/apps", destination: URL(string: "https://api.slack.com/apps")!)
+                                .font(.caption)
+                        }
 
                         Spacer()
+
+                        statusBadge(slackStatus)
 
                         Button("Save & Test") {
                             Task { await saveAndTestSlack() }
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.small)
-                        .disabled(tempSlackToken.isEmpty || isTesting)
+                        .disabled((tempSlackBotToken.isEmpty && tempSlackUserToken.isEmpty) || isTesting)
                     }
 
                     // Available tools when connected
@@ -1962,6 +2319,75 @@ struct IntegrationsSettingsContent: View {
                 }
             }
 
+            // Apple Integrations
+            SettingsCard(title: "Apple Integrations", icon: "apple.logo") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Enable native Apple app integrations. These use system APIs and may require permission prompts.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    // Reminders
+                    appleIntegrationToggle(
+                        title: "Reminders",
+                        icon: "checklist",
+                        description: "Create, list, and complete reminders",
+                        isEnabled: $remindersEnabled,
+                        tools: [
+                            ("Create Reminder", "plus.circle"),
+                            ("List Reminders", "list.bullet"),
+                            ("Complete", "checkmark.circle"),
+                            ("Search", "magnifyingglass")
+                        ]
+                    )
+
+                    Divider()
+
+                    // Notes
+                    appleIntegrationToggle(
+                        title: "Notes",
+                        icon: "note.text",
+                        description: "Create, search, and append to notes",
+                        isEnabled: $notesEnabled,
+                        tools: [
+                            ("Create Note", "square.and.pencil"),
+                            ("Search Notes", "magnifyingglass"),
+                            ("Get Note", "doc.text"),
+                            ("Append", "text.append")
+                        ]
+                    )
+
+                    Divider()
+
+                    // Mail
+                    appleIntegrationToggle(
+                        title: "Mail",
+                        icon: "envelope",
+                        description: "Compose emails and search mailboxes",
+                        isEnabled: $mailEnabled,
+                        tools: [
+                            ("Compose", "square.and.pencil"),
+                            ("Search", "magnifyingglass"),
+                            ("Unread Count", "envelope.badge"),
+                            ("Mailboxes", "tray.2")
+                        ]
+                    )
+
+                    Divider()
+
+                    // Messages
+                    appleIntegrationToggle(
+                        title: "Messages",
+                        icon: "message",
+                        description: "Open compose windows for iMessage/SMS",
+                        isEnabled: $messagesEnabled,
+                        tools: [
+                            ("iMessage", "message.fill"),
+                            ("SMS", "phone.bubble")
+                        ]
+                    )
+                }
+            }
+
             // Info Card
             SettingsCard(title: "About Integrations", icon: "info.circle") {
                 Text("Native integrations provide tools that agents can use during conversations. When configured, agents can automatically use these tools to complete tasks like sending Slack messages or creating Quip documents.")
@@ -1972,9 +2398,26 @@ struct IntegrationsSettingsContent: View {
             Spacer()
         }
         .onAppear {
-            tempSlackToken = slackToken
+            // Migrate legacy single token to bot token if needed
+            if !legacySlackToken.isEmpty && slackBotToken.isEmpty {
+                slackBotToken = legacySlackToken
+                legacySlackToken = ""
+            }
+
+            tempSlackBotToken = slackBotToken
+            tempSlackUserToken = slackUserToken
             tempQuipToken = quipToken
             updateStatuses()
+
+            // Configure Apple integrations based on stored preferences
+            Task {
+                await appState.configureAppleIntegrations(
+                    reminders: remindersEnabled,
+                    notes: notesEnabled,
+                    mail: mailEnabled,
+                    messages: messagesEnabled
+                )
+            }
         }
     }
 
@@ -2016,8 +2459,78 @@ struct IntegrationsSettingsContent: View {
         }
     }
 
+    @ViewBuilder
+    private func appleIntegrationToggle(
+        title: String,
+        icon: String,
+        description: String,
+        isEnabled: Binding<Bool>,
+        tools: [(String, String)]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(isEnabled.wrappedValue ? .blue : .secondary)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.headline)
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Toggle("", isOn: isEnabled)
+                    .labelsHidden()
+                    .onChange(of: isEnabled.wrappedValue) { _, newValue in
+                        Task {
+                            await configureAppleIntegration(title, enabled: newValue)
+                        }
+                    }
+            }
+
+            if isEnabled.wrappedValue {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
+                    ForEach(tools, id: \.0) { tool in
+                        HStack(spacing: 4) {
+                            Image(systemName: tool.1)
+                                .font(.caption2)
+                                .foregroundStyle(.blue)
+                            Text(tool.0)
+                                .font(.caption2)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.leading, 32)
+            }
+        }
+    }
+
+    private func configureAppleIntegration(_ name: String, enabled: Bool) async {
+        switch name {
+        case "Reminders":
+            await appState.configureReminders(enabled: enabled)
+        case "Notes":
+            await appState.configureNotes(enabled: enabled)
+        case "Mail":
+            await appState.configureMail(enabled: enabled)
+        case "Messages":
+            await appState.configureMessages(enabled: enabled)
+        default:
+            break
+        }
+    }
+
     private func updateStatuses() {
-        slackStatus = slackToken.isEmpty ? .notConfigured : .configured
+        let hasAnySlackToken = !slackBotToken.isEmpty || !slackUserToken.isEmpty
+        slackStatus = hasAnySlackToken ? .configured : .notConfigured
+        slackHasBotToken = !slackBotToken.isEmpty
+        slackHasUserToken = !slackUserToken.isEmpty
         quipStatus = quipToken.isEmpty ? .notConfigured : .configured
     }
 
@@ -2025,17 +2538,26 @@ struct IntegrationsSettingsContent: View {
         isTesting = true
         slackStatus = .testing
 
-        // Save token
-        slackToken = tempSlackToken
+        // Save tokens
+        slackBotToken = tempSlackBotToken
+        slackUserToken = tempSlackUserToken
 
-        // Configure integration
-        await appState.configureSlack(token: tempSlackToken)
+        // Configure integration with both tokens
+        await appState.configureSlack(
+            botToken: tempSlackBotToken.isEmpty ? nil : tempSlackBotToken,
+            userToken: tempSlackUserToken.isEmpty ? nil : tempSlackUserToken
+        )
 
         // Verify by checking if tools are available
         let tools = await appState.nativeIntegrations.allTools()
         let hasSlackTools = tools.contains { $0.name.hasPrefix("slack_") }
 
+        // Get token status
+        let tokenStatus = await appState.nativeIntegrations.slackTokenStatus()
+
         await MainActor.run {
+            slackHasBotToken = tokenStatus.hasBot
+            slackHasUserToken = tokenStatus.hasUser
             slackStatus = hasSlackTools ? .configured : .error("Failed to connect")
             isTesting = false
         }
@@ -2244,419 +2766,6 @@ struct AppToggleRow: View {
         }
         .padding(.vertical, 8)
     }
-}
-
-// MARK: - Add App Sheet
-
-struct AddAppSheet: View {
-    @Binding var apps: [ExtensionItem]
-    @Environment(\.dismiss) private var dismiss
-    @State private var discoveredApps: [DiscoveredApp] = []
-    @State private var isScanning = false
-    @State private var searchText = ""
-    @State private var selectedApp: DiscoveredApp? = nil
-
-    var filteredApps: [DiscoveredApp] {
-        if searchText.isEmpty {
-            return discoveredApps
-        }
-        return discoveredApps.filter {
-            $0.name.localizedCaseInsensitiveContains(searchText)
-        }
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                if selectedApp != nil {
-                    Button(action: { selectedApp = nil }) {
-                        Image(systemName: "chevron.left")
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Text(selectedApp?.name ?? "Add App")
-                    .font(.headline)
-                Spacer()
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.escape)
-            }
-            .padding()
-
-            Divider()
-
-            if let app = selectedApp {
-                // Detail view for selected app
-                AppDetailView(
-                    app: app,
-                    isAdded: apps.contains(where: { $0.id == app.bundleId }),
-                    onAdd: {
-                        addApp(app)
-                        selectedApp = nil
-                    }
-                )
-            } else {
-                // Search
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField("Search installed apps...", text: $searchText)
-                        .textFieldStyle(.plain)
-                }
-                .padding(8)
-                .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .padding()
-
-                // App list
-                if isScanning {
-                    Spacer()
-                    ProgressView("Scanning for apps with AppIntents...")
-                    Spacer()
-                } else if filteredApps.isEmpty {
-                    Spacer()
-                    VStack(spacing: 12) {
-                        Image(systemName: "app.badge.checkmark")
-                            .font(.system(size: 48))
-                            .foregroundStyle(.secondary)
-                        Text("No apps with AppIntents found")
-                            .font(.headline)
-                        Text("Apps need to support AppIntents to be added here")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                } else {
-                    List(filteredApps) { app in
-                        Button(action: { selectedApp = app }) {
-                            HStack {
-                                // App icon
-                                if let icon = app.icon {
-                                    Image(nsImage: icon)
-                                        .resizable()
-                                        .frame(width: 32, height: 32)
-                                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                                } else {
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(.gray.opacity(0.2))
-                                        .frame(width: 32, height: 32)
-                                }
-
-                                VStack(alignment: .leading) {
-                                    Text(app.name)
-                                        .fontWeight(.medium)
-                                    Text("\(app.actions.count) actions available")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer()
-
-                                if apps.contains(where: { $0.id == app.bundleId }) {
-                                    Text("Added")
-                                        .font(.caption)
-                                        .foregroundStyle(.green)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
-                                        .background(Color.green.opacity(0.1), in: Capsule())
-                                } else {
-                                    Image(systemName: "chevron.right")
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.vertical, 4)
-                    }
-                }
-            }
-        }
-        .frame(width: 500, height: 550)
-        .task {
-            await scanForApps()
-        }
-    }
-
-    private func scanForApps() async {
-        isScanning = true
-        defer { isScanning = false }
-
-        // Scan /Applications for apps with AppIntents
-        guard let contents = try? FileManager.default.contentsOfDirectory(atPath: "/Applications") else {
-            return
-        }
-        let appURLs = contents
-            .compactMap { URL(fileURLWithPath: "/Applications/\($0)") }
-            .filter { $0.pathExtension == "app" }
-
-        var found: [DiscoveredApp] = []
-
-        for appURL in appURLs.prefix(50) { // Limit for performance
-            if let bundle = Bundle(url: appURL),
-               let name = bundle.infoDictionary?["CFBundleName"] as? String ?? bundle.infoDictionary?["CFBundleDisplayName"] as? String,
-               let bundleId = bundle.bundleIdentifier {
-
-                // Check if app has AppIntents (simplified check)
-                let hasIntents = FileManager.default.fileExists(
-                    atPath: appURL.appendingPathComponent("Contents/Resources/AppIntents.intentdefinition").path
-                ) || FileManager.default.fileExists(
-                    atPath: appURL.appendingPathComponent("Contents/PlugIns").path
-                )
-
-                // Load app icon
-                var icon: NSImage?
-                if let iconFile = bundle.infoDictionary?["CFBundleIconFile"] as? String {
-                    let iconPath = appURL.appendingPathComponent("Contents/Resources/\(iconFile)")
-                    icon = NSImage(contentsOf: iconPath)
-                }
-                if icon == nil {
-                    icon = NSWorkspace.shared.icon(forFile: appURL.path)
-                }
-
-                if hasIntents {
-                    // Generate realistic actions based on app type
-                    // In production, this would actually introspect the app's AppIntents
-                    let actions = generateActionsForApp(name: name, bundleId: bundleId)
-
-                    found.append(DiscoveredApp(
-                        bundleId: bundleId,
-                        name: name,
-                        icon: icon,
-                        actions: actions
-                    ))
-                }
-            }
-        }
-
-        discoveredApps = found.sorted { $0.name < $1.name }
-    }
-
-    /// Generate representative actions for an app based on its type
-    /// In production, this would actually introspect the app's AppIntents metadata
-    private func generateActionsForApp(name: String, bundleId: String) -> [AppAction] {
-        let lowercaseName = name.lowercased()
-
-        // Common action templates based on app categories
-        if lowercaseName.contains("mail") || lowercaseName.contains("outlook") {
-            return [
-                AppAction(id: "\(bundleId).send", name: "Send Email", description: "Compose and send emails", icon: "paperplane.fill", color: .blue, requiresApproval: true),
-                AppAction(id: "\(bundleId).read", name: "Read Emails", description: "Access and read email content", icon: "envelope.open.fill", color: .blue, requiresApproval: false),
-                AppAction(id: "\(bundleId).search", name: "Search Emails", description: "Search through your mailbox", icon: "magnifyingglass", color: .gray, requiresApproval: false),
-            ]
-        } else if lowercaseName.contains("calendar") {
-            return [
-                AppAction(id: "\(bundleId).create", name: "Create Event", description: "Add new calendar events", icon: "calendar.badge.plus", color: .red, requiresApproval: true),
-                AppAction(id: "\(bundleId).read", name: "View Events", description: "Access calendar entries", icon: "calendar", color: .red, requiresApproval: false),
-                AppAction(id: "\(bundleId).modify", name: "Modify Events", description: "Update existing events", icon: "pencil", color: .orange, requiresApproval: true),
-            ]
-        } else if lowercaseName.contains("note") || lowercaseName.contains("bear") {
-            return [
-                AppAction(id: "\(bundleId).create", name: "Create Note", description: "Create new notes", icon: "square.and.pencil", color: .yellow, requiresApproval: false),
-                AppAction(id: "\(bundleId).read", name: "Read Notes", description: "Access note content", icon: "doc.text", color: .yellow, requiresApproval: false),
-                AppAction(id: "\(bundleId).search", name: "Search Notes", description: "Search through notes", icon: "magnifyingglass", color: .gray, requiresApproval: false),
-            ]
-        } else if lowercaseName.contains("reminder") || lowercaseName.contains("things") || lowercaseName.contains("todoist") {
-            return [
-                AppAction(id: "\(bundleId).create", name: "Create Reminder", description: "Add new reminders", icon: "checklist", color: .orange, requiresApproval: false),
-                AppAction(id: "\(bundleId).complete", name: "Complete Tasks", description: "Mark tasks as done", icon: "checkmark.circle.fill", color: .green, requiresApproval: false),
-                AppAction(id: "\(bundleId).read", name: "View Tasks", description: "Access task lists", icon: "list.bullet", color: .orange, requiresApproval: false),
-            ]
-        } else if lowercaseName.contains("safari") || lowercaseName.contains("chrome") || lowercaseName.contains("firefox") {
-            return [
-                AppAction(id: "\(bundleId).open", name: "Open URL", description: "Open web pages", icon: "globe", color: .blue, requiresApproval: false),
-                AppAction(id: "\(bundleId).search", name: "Web Search", description: "Perform web searches", icon: "magnifyingglass", color: .gray, requiresApproval: false),
-            ]
-        } else if lowercaseName.contains("music") || lowercaseName.contains("spotify") {
-            return [
-                AppAction(id: "\(bundleId).play", name: "Play Music", description: "Control playback", icon: "play.fill", color: .pink, requiresApproval: false),
-                AppAction(id: "\(bundleId).search", name: "Search Music", description: "Find songs and artists", icon: "magnifyingglass", color: .gray, requiresApproval: false),
-            ]
-        } else if lowercaseName.contains("finder") || lowercaseName.contains("file") {
-            return [
-                AppAction(id: "\(bundleId).open", name: "Open Files", description: "Open files and folders", icon: "folder.fill", color: .blue, requiresApproval: false),
-                AppAction(id: "\(bundleId).move", name: "Move Files", description: "Move files between locations", icon: "arrow.right.doc.on.clipboard", color: .blue, requiresApproval: true),
-                AppAction(id: "\(bundleId).delete", name: "Delete Files", description: "Move files to trash", icon: "trash.fill", color: .red, requiresApproval: true),
-            ]
-        } else {
-            // Generic actions for unknown apps
-            return [
-                AppAction(id: "\(bundleId).launch", name: "Launch App", description: "Open \(name)", icon: "app.fill", color: .gray, requiresApproval: false),
-                AppAction(id: "\(bundleId).action", name: "Perform Action", description: "Execute app-specific action", icon: "bolt.fill", color: .blue, requiresApproval: true),
-            ]
-        }
-    }
-
-    private func addApp(_ app: DiscoveredApp) {
-        let item = ExtensionItem(
-            id: app.bundleId,
-            name: app.name,
-            description: "\(app.actions.count) actions",
-            category: "apps",
-            icon: "app.badge",
-            isEnabled: true,
-            source: .appIntents
-        )
-        apps.append(item)
-    }
-}
-
-// MARK: - App Detail View (Approval/Actions Page)
-
-struct AppDetailView: View {
-    let app: DiscoveredApp
-    let isAdded: Bool
-    let onAdd: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // App header
-            HStack(spacing: 16) {
-                if let icon = app.icon {
-                    Image(nsImage: icon)
-                        .resizable()
-                        .frame(width: 64, height: 64)
-                        .clipShape(RoundedRectangle(cornerRadius: 14))
-                } else {
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(.gray.opacity(0.2))
-                        .frame(width: 64, height: 64)
-                }
-
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(app.name)
-                        .font(.title2.weight(.semibold))
-                    Text(app.bundleId)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-            }
-            .padding()
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-
-            Divider()
-
-            // Actions section
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // Description
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Available Actions")
-                            .font(.headline)
-                        Text("Adding this app will allow agents to perform the following actions on your behalf:")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal)
-                    .padding(.top)
-
-                    // Actions list
-                    VStack(spacing: 0) {
-                        ForEach(app.actions) { action in
-                            HStack(spacing: 12) {
-                                Image(systemName: action.icon)
-                                    .font(.title3)
-                                    .foregroundStyle(action.color)
-                                    .frame(width: 24)
-
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(action.name)
-                                        .fontWeight(.medium)
-                                    Text(action.description)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-
-                                Spacer()
-
-                                // Risk indicator
-                                if action.requiresApproval {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "exclamationmark.shield")
-                                            .font(.caption)
-                                        Text("Approval Required")
-                                            .font(.caption2)
-                                    }
-                                    .foregroundStyle(.orange)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(Color.orange.opacity(0.1), in: Capsule())
-                                }
-                            }
-                            .padding(.horizontal)
-                            .padding(.vertical, 10)
-
-                            if action.id != app.actions.last?.id {
-                                Divider()
-                                    .padding(.leading, 52)
-                            }
-                        }
-                    }
-                    .background(Color(nsColor: .textBackgroundColor).opacity(0.3))
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                    .padding(.horizontal)
-
-                    // Permissions note
-                    HStack(spacing: 8) {
-                        Image(systemName: "info.circle")
-                            .foregroundStyle(.blue)
-                        Text("Actions marked with \"Approval Required\" will ask for your confirmation before executing.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding()
-                    .background(Color.blue.opacity(0.05))
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                    .padding(.horizontal)
-                }
-            }
-
-            Divider()
-
-            // Add button
-            HStack {
-                Spacer()
-                if isAdded {
-                    Label("Already Added", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                } else {
-                    Button(action: onAdd) {
-                        Label("Add \(app.name)", systemImage: "plus.circle.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
-                }
-                Spacer()
-            }
-            .padding()
-        }
-    }
-}
-
-// MARK: - App Action Model
-
-struct AppAction: Identifiable {
-    let id: String
-    let name: String
-    let description: String
-    let icon: String
-    let color: Color
-    let requiresApproval: Bool
-}
-
-struct DiscoveredApp: Identifiable {
-    let bundleId: String
-    let name: String
-    let icon: NSImage?
-    let actions: [AppAction]
-
-    var id: String { bundleId }
-}
-
-private func contentsOfDirectory(atPath path: String) -> [String] {
-    (try? FileManager.default.contentsOfDirectory(atPath: path)) ?? []
 }
 
 // MARK: - Extension Item Model
@@ -3369,7 +3478,7 @@ struct SystemHealthView: View {
     // End-to-end test state
     @State private var isRunningE2ETest = false
     @State private var e2eTestResult: E2ETestResult?
-    @State private var e2eTestConversationId: ConversationID?
+    @State private var e2eTestThreadId: AgentKit.ThreadID?
 
     var body: some View {
         ScrollView {
@@ -3477,11 +3586,11 @@ struct SystemHealthView: View {
 
                 Spacer()
 
-                if let convId = e2eTestConversationId {
-                    Button("View Conversation") {
-                        // Navigate to the test conversation
-                        appState.selectedConversationId = convId
-                        appState.selectedSidebarItem = .conversations
+                if let threadId = e2eTestThreadId {
+                    Button("View Thread") {
+                        // Navigate to the test thread
+                        appState.selectedThreadId = threadId
+                        appState.selectedSidebarItem = .threads
                     }
                     .buttonStyle(.bordered)
                 }
@@ -3594,16 +3703,16 @@ struct SystemHealthView: View {
             let testMessage = "Hello! Please respond with a brief greeting and confirm you're working properly."
 
             do {
-                // Find or create the health check conversation
-                let conversationId = findOrCreateHealthCheckConversation()
-                await MainActor.run { e2eTestConversationId = conversationId }
+                // Find or create the health check thread
+                let threadId = findOrCreateHealthCheckThread()
+                await MainActor.run { e2eTestThreadId = threadId }
 
-                // Add the test message to the conversation
-                let userMsg = ConversationMessage(role: .user, content: testMessage)
-                if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversationId }) {
+                // Add the test message to the thread
+                let userMsg = AgentKit.ThreadMessage.user(testMessage)
+                if let index = appState.workspace.threads.firstIndex(where: { $0.id == threadId }) {
                     await MainActor.run {
-                        appState.workspace.conversations[index].messages.append(userMsg)
-                        appState.workspace.conversations[index].updatedAt = Date()
+                        appState.workspace.threads[index].messages.append(userMsg)
+                        appState.workspace.threads[index].updatedAt = Date()
                     }
                 }
 
@@ -3622,21 +3731,12 @@ struct SystemHealthView: View {
                 let endTime = Date()
                 let latencyMs = Int((endTime.timeIntervalSince(startTime)) * 1000)
 
-                // Add response to conversation
-                let assistantMsg = ConversationMessage(
-                    role: .assistant,
-                    content: responseText,
-                    metadata: MessageMetadata(
-                        model: chatService.loadedModelId,
-                        provider: chatService.selectedProvider?.name,
-                        tokens: chatService.generationStats?.tokensGenerated,
-                        latency: chatService.generationStats?.totalDuration
-                    )
-                )
-                if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversationId }) {
+                // Add response to thread
+                let assistantMsg = AgentKit.ThreadMessage.assistant(responseText)
+                if let index = appState.workspace.threads.firstIndex(where: { $0.id == threadId }) {
                     await MainActor.run {
-                        appState.workspace.conversations[index].messages.append(assistantMsg)
-                        appState.workspace.conversations[index].updatedAt = Date()
+                        appState.workspace.threads[index].messages.append(assistantMsg)
+                        appState.workspace.threads[index].updatedAt = Date()
                     }
                 }
 
@@ -3675,22 +3775,22 @@ struct SystemHealthView: View {
         }
     }
 
-    private func findOrCreateHealthCheckConversation() -> ConversationID {
-        // Look for existing health check conversation
-        if let existing = appState.workspace.conversations.first(where: { $0.title == "🏥 System Health Check" }) {
+    private func findOrCreateHealthCheckThread() -> AgentKit.ThreadID {
+        // Look for existing health check thread
+        if let existing = appState.workspace.threads.first(where: { $0.title == "🏥 System Health Check" }) {
             return existing.id
         }
 
-        // Create new health check conversation
-        let conversation = Conversation(
+        // Create new health check thread
+        let thread = AgentKit.Thread(
             title: "🏥 System Health Check",
-            messages: [],
+            container: .global,
             modelId: chatService.loadedModelId,
             providerId: chatService.selectedProvider?.id.uuidString
         )
 
-        appState.workspace.conversations.insert(conversation, at: 0)
-        return conversation.id
+        appState.workspace.threads.insert(thread, at: 0)
+        return thread.id
     }
 
     // MARK: - Components
@@ -3863,7 +3963,7 @@ struct SystemHealthView: View {
             }
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
-                infoRow("Conversations", "\(appState.workspace.conversations.count)")
+                infoRow("Threads", "\(appState.workspace.threads.count)")
                 infoRow("Documents", "\(appState.workspace.documents.count)")
                 infoRow("Providers", "\(providerManager.providers.count) configured")
                 infoRow("MCP Connections", "\(mcpConnectionCount)")
@@ -4019,9 +4119,9 @@ struct SystemHealthView: View {
 
             // Workspace Check
             await updateCheck(name: "Workspace") { _ in
-                let convCount = appState.workspace.conversations.count
+                let threadCount = appState.workspace.threads.count
                 let docCount = appState.workspace.documents.count
-                return (.healthy, "\(convCount) conversations, \(docCount) documents")
+                return (.healthy, "\(threadCount) threads, \(docCount) documents")
             }
 
             // Memory Store Check

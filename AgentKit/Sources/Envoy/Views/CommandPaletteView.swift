@@ -198,12 +198,12 @@ struct CommandPaletteView: View {
                 action: { appState.selectedSidebarItem = .documents; dismiss() }
             ),
             PaletteCommand(
-                id: "nav-conversations",
-                title: "Conversations",
+                id: "nav-threads",
+                title: "Threads",
                 subtitle: "Agent chat threads",
                 icon: "bubble.left.and.bubble.right",
                 category: "Navigation",
-                action: { appState.selectedSidebarItem = .conversations; dismiss() }
+                action: { appState.selectedSidebarItem = .threads; dismiss() }
             ),
             PaletteCommand(
                 id: "nav-tasks",
@@ -243,13 +243,13 @@ struct CommandPaletteView: View {
                 action: { appState.showNewDocumentSheet = true; dismiss() }
             ),
             PaletteCommand(
-                id: "action-new-conversation",
-                title: "New Conversation",
+                id: "action-new-thread",
+                title: "New Thread",
                 subtitle: "Start a chat with an agent",
                 icon: "bubble.left.and.bubble.right",
                 category: "Actions",
                 shortcut: "⌘⇧N",
-                action: { appState.showNewConversationSheet = true; dismiss() }
+                action: { appState.showNewThreadSheet = true; dismiss() }
             ),
             PaletteCommand(
                 id: "action-new-task",
@@ -305,17 +305,17 @@ struct CommandPaletteView: View {
             ))
         }
 
-        // Recent conversations
-        for conv in appState.workspace.conversations.prefix(5) {
+        // Recent threads
+        for thread in appState.workspace.threads.prefix(5) {
             commands.append(PaletteCommand(
-                id: "conv-\(conv.id.rawValue)",
-                title: conv.title,
-                subtitle: "Conversation • \(conv.agentName ?? "Agent")",
+                id: "thread-\(thread.id.rawValue)",
+                title: thread.title,
+                subtitle: "Thread • \(thread.container.agentName ?? "Agent")",
                 icon: "bubble.left",
-                category: "Recent Conversations",
+                category: "Recent Threads",
                 action: {
-                    appState.selectedSidebarItem = .conversations
-                    appState.selectedConversationId = conv.id
+                    appState.selectedSidebarItem = .threads
+                    appState.selectedThreadId = thread.id
                     dismiss()
                 }
             ))

@@ -1,5 +1,6 @@
 import AgentKit
 import AppKit
+import MarkdownUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -175,7 +176,7 @@ enum Spacing {
 
 // MARK: - Conversation Filter
 
-enum ConversationFilter: String, CaseIterable, Identifiable {
+enum ThreadFilter: String, CaseIterable, Identifiable {
     case all = "All"
     case agents = "Agents"  // Primary focus - agent-centric design
     case starred = "Starred"
@@ -238,66 +239,70 @@ enum DateGroup: Int, CaseIterable, Hashable {
     }
 }
 
-struct ConversationDateGroup: Hashable {
+struct ThreadDateGroup: Hashable {
     let dateGroup: DateGroup
-    let conversations: [Conversation]
+    let threads: [AgentKit.Thread]
 
     func hash(into hasher: inout Hasher) {
         hasher.combine(dateGroup)
     }
 
-    static func == (lhs: ConversationDateGroup, rhs: ConversationDateGroup) -> Bool {
+    static func == (lhs: ThreadDateGroup, rhs: ThreadDateGroup) -> Bool {
         lhs.dateGroup == rhs.dateGroup
     }
 }
 
-struct ConversationsView: View {
+struct ThreadsView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(ChatService.self) private var chatService
     @Environment(ProviderConfigManager.self) private var providerManager
     @State private var searchText = ""
-    @State private var selectedFilter: ConversationFilter = .all
+    @State private var selectedFilter: ThreadFilter = .all
 
-    var filteredConversations: [Conversation] {
-        var conversations = appState.workspace.conversations
+    var filteredThreads: [AgentKit.Thread] {
+        var threads = appState.workspace.threads
+
+        // Exclude About Me space threads - they appear as threads in that space
+        threads = threads.filter { $0.container.spaceId != AboutMeService.aboutMeSpaceId.rawValue }
 
         // Apply agent DM filter first (when coming from Direct Messages)
         if let agentName = appState.selectedAgentFilter {
-            conversations = conversations.filter { $0.agentName == agentName }
+            threads = threads.filter { $0.container.agentName == agentName }
         }
 
         // Apply filter (agent-centric design - no models filter)
         switch selectedFilter {
         case .all:
             // Exclude archived from "All" view
-            conversations = conversations.filter { !$0.isArchived }
+            threads = threads.filter { !$0.isArchived }
         case .agents:
-            // Show agent conversations (includes model-powered agents)
-            conversations = conversations.filter { ($0.agentName != nil || $0.modelId != nil) && !$0.isArchived }
+            // Show agent threads (includes model-powered agents)
+            threads = threads.filter { ($0.container.agentName != nil || $0.modelId != nil) && !$0.isArchived }
         case .starred:
-            conversations = conversations.filter { $0.isStarred && !$0.isArchived }
+            threads = threads.filter { $0.isStarred && !$0.isArchived }
         case .archived:
-            conversations = conversations.filter { $0.isArchived }
+            threads = threads.filter { $0.isArchived }
         }
 
         // Apply search
         if !searchText.isEmpty {
-            conversations = conversations.filter {
+            threads = threads.filter {
                 $0.title.localizedCaseInsensitiveContains(searchText) ||
-                $0.messages.contains { $0.content.localizedCaseInsensitiveContains(searchText) }
+                $0.messages.contains { $0.textContent.localizedCaseInsensitiveContains(searchText) }
             }
         }
 
-        return conversations
+        return threads
     }
 
-    private var filterCounts: [ConversationFilter: Int] {
-        let all = appState.workspace.conversations
+    private var filterCounts: [ThreadFilter: Int] {
+        // Exclude About Me space threads from counts
+        let all = appState.workspace.threads.filter { $0.container.spaceId != AboutMeService.aboutMeSpaceId.rawValue }
         let nonArchived = all.filter { !$0.isArchived }
         return [
             .all: nonArchived.count,
-            // Agents includes all AI-powered conversations (agent-centric design)
-            .agents: nonArchived.filter { $0.agentName != nil || $0.modelId != nil }.count,
+            // Agents includes all AI-powered threads (agent-centric design)
+            .agents: nonArchived.filter { $0.container.agentName != nil || $0.modelId != nil }.count,
             .starred: nonArchived.filter { $0.isStarred }.count,
             .archived: all.filter { $0.isArchived }.count
         ]
@@ -314,15 +319,15 @@ struct ConversationsView: View {
     var body: some View {
         HSplitView {
             // Conversation list
-            conversationList
+            threadList
                 .frame(minWidth: 250, maxWidth: 350)
 
-            // Selected conversation detail
-            if let selectedId = appState.selectedConversationId,
-               let conversation = appState.workspace.conversations.first(where: { $0.id == selectedId }) {
-                ConversationDetailView(conversation: conversation)
+            // Selected thread detail
+            if let selectedId = appState.selectedThreadId,
+               let thread = appState.workspace.threads.first(where: { $0.id == selectedId }) {
+                ThreadDetailView(thread: thread)
             } else {
-                EmptyConversationDetailView()
+                EmptyThreadDetailView()
             }
         }
         .navigationTitle(agentFilterTitle)
@@ -344,134 +349,134 @@ struct ConversationsView: View {
             }
 
             ToolbarItem {
-                Button(action: { appState.showNewConversationSheet = true }) {
+                Button(action: { appState.showNewThreadSheet = true }) {
                     Label("New Conversation", systemImage: "plus")
                 }
             }
         }
         .onKeyPress(.upArrow) {
-            selectPreviousConversation()
+            selectPreviousThread()
             return .handled
         }
         .onKeyPress(.downArrow) {
-            selectNextConversation()
+            selectNextThread()
             return .handled
         }
         .onKeyPress(.delete) {
-            if appState.selectedConversationId != nil {
+            if appState.selectedThreadId != nil {
                 // Trigger delete confirmation
-                NotificationCenter.default.post(name: .deleteSelectedConversation, object: nil)
+                NotificationCenter.default.post(name: .deleteSelectedThread, object: nil)
             }
             return .handled
         }
     }
 
-    private func selectNextConversation() {
-        let conversations = filteredConversations
-        guard !conversations.isEmpty else { return }
+    private func selectNextThread() {
+        let threads = filteredThreads
+        guard !threads.isEmpty else { return }
 
-        if let currentId = appState.selectedConversationId,
-           let currentIndex = conversations.firstIndex(where: { $0.id == currentId }) {
-            let nextIndex = min(currentIndex + 1, conversations.count - 1)
-            appState.selectedConversationId = conversations[nextIndex].id
+        if let currentId = appState.selectedThreadId,
+           let currentIndex = threads.firstIndex(where: { $0.id == currentId }) {
+            let nextIndex = min(currentIndex + 1, threads.count - 1)
+            appState.selectedThreadId = threads[nextIndex].id
         } else {
-            appState.selectedConversationId = conversations.first?.id
+            appState.selectedThreadId = threads.first?.id
         }
     }
 
-    private func selectPreviousConversation() {
-        let conversations = filteredConversations
-        guard !conversations.isEmpty else { return }
+    private func selectPreviousThread() {
+        let threads = filteredThreads
+        guard !threads.isEmpty else { return }
 
-        if let currentId = appState.selectedConversationId,
-           let currentIndex = conversations.firstIndex(where: { $0.id == currentId }) {
+        if let currentId = appState.selectedThreadId,
+           let currentIndex = threads.firstIndex(where: { $0.id == currentId }) {
             let prevIndex = max(currentIndex - 1, 0)
-            appState.selectedConversationId = conversations[prevIndex].id
+            appState.selectedThreadId = threads[prevIndex].id
         } else {
-            appState.selectedConversationId = conversations.last?.id
+            appState.selectedThreadId = threads.last?.id
         }
     }
 
-    private func deleteConversation(_ conversation: Conversation) {
+    private func deleteThread(_ thread: AgentKit.Thread) {
         FeedbackManager.itemDeleted()
         withAnimation {
-            appState.workspace.conversations.removeAll { $0.id == conversation.id }
-            if appState.selectedConversationId == conversation.id {
-                appState.selectedConversationId = nil
+            appState.workspace.threads.removeAll { $0.id == thread.id }
+            if appState.selectedThreadId == thread.id {
+                appState.selectedThreadId = nil
             }
         }
     }
 
-    private func togglePin(_ conversation: Conversation) {
-        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
+    private func togglePin(_ thread: AgentKit.Thread) {
+        if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
             FeedbackManager.itemFavorited()
             withAnimation {
-                appState.workspace.conversations[index].isPinned.toggle()
+                appState.workspace.threads[index].isPinned.toggle()
             }
         }
     }
 
-    private func toggleStar(_ conversation: Conversation) {
-        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
+    private func toggleStar(_ thread: AgentKit.Thread) {
+        if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
             FeedbackManager.itemFavorited()
             withAnimation {
-                appState.workspace.conversations[index].isStarred.toggle()
+                appState.workspace.threads[index].isStarred.toggle()
             }
         }
     }
 
-    private func toggleArchive(_ conversation: Conversation) {
-        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
+    private func toggleArchive(_ thread: AgentKit.Thread) {
+        if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
             FeedbackManager.itemArchived()
             withAnimation(.easeInOut(duration: 0.3)) {
-                appState.workspace.conversations[index].isArchived.toggle()
-                // Deselect if archiving the selected conversation
-                if appState.workspace.conversations[index].isArchived &&
-                   appState.selectedConversationId == conversation.id {
-                    appState.selectedConversationId = nil
+                appState.workspace.threads[index].isArchived.toggle()
+                // Deselect if archiving the selected thread
+                if appState.workspace.threads[index].isArchived &&
+                   appState.selectedThreadId == thread.id {
+                    appState.selectedThreadId = nil
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func conversationContextMenu(for conversation: Conversation) -> some View {
-        Button(action: { togglePin(conversation) }) {
-            Label(conversation.isPinned ? "Unpin" : "Pin",
-                  systemImage: conversation.isPinned ? "pin.slash" : "pin")
+    private func threadContextMenu(for thread: AgentKit.Thread) -> some View {
+        Button(action: { togglePin(thread) }) {
+            Label(thread.isPinned ? "Unpin" : "Pin",
+                  systemImage: thread.isPinned ? "pin.slash" : "pin")
         }
 
-        Button(action: { toggleStar(conversation) }) {
-            Label(conversation.isStarred ? "Remove Star" : "Add Star",
-                  systemImage: conversation.isStarred ? "star.slash" : "star")
+        Button(action: { toggleStar(thread) }) {
+            Label(thread.isStarred ? "Remove Star" : "Add Star",
+                  systemImage: thread.isStarred ? "star.slash" : "star")
         }
 
         Divider()
 
         Button(action: {
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(conversation.title, forType: .string)
+            NSPasteboard.general.setString(thread.title, forType: .string)
         }) {
             Label("Copy Title", systemImage: "doc.on.doc")
         }
 
         Divider()
 
-        Button(action: { toggleArchive(conversation) }) {
-            Label(conversation.isArchived ? "Unarchive" : "Archive",
-                  systemImage: conversation.isArchived ? "tray.and.arrow.up" : "archivebox")
+        Button(action: { toggleArchive(thread) }) {
+            Label(thread.isArchived ? "Unarchive" : "Archive",
+                  systemImage: thread.isArchived ? "tray.and.arrow.up" : "archivebox")
         }
 
-        Button(role: .destructive, action: { deleteConversation(conversation) }) {
+        Button(role: .destructive, action: { deleteThread(thread) }) {
             Label("Delete", systemImage: "trash")
         }
     }
 
-    private var conversationList: some View {
+    private var threadList: some View {
         Group {
-            if appState.workspace.conversations.isEmpty {
-                // Empty state for no conversations
-                EmptyConversationListView()
+            if appState.workspace.threads.isEmpty {
+                // Empty state for no threads
+                EmptyThreadListView()
             } else {
                 VStack(spacing: 0) {
                     // Filter chips
@@ -481,86 +486,86 @@ struct ConversationsView: View {
 
                     Divider()
 
-                    // Conversation list
-                    List(selection: $appState.selectedConversationId) {
-                        if !filteredConversations.filter({ $0.isPinned }).isEmpty {
+                    // Thread list
+                    List(selection: $appState.selectedThreadId) {
+                        if !filteredThreads.filter({ $0.isPinned }).isEmpty {
                             Section("Pinned") {
-                                ForEach(filteredConversations.filter { $0.isPinned }) { conversation in
-                                    ConversationRow(conversation: conversation)
-                                        .tag(conversation.id)
+                                ForEach(filteredThreads.filter { $0.isPinned }) { thread in
+                                    ThreadRow(thread: thread)
+                                        .tag(thread.id)
                                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                             Button(role: .destructive) {
-                                                deleteConversation(conversation)
+                                                deleteThread(thread)
                                             } label: {
                                                 Label("Delete", systemImage: "trash")
                                             }
 
                                             Button {
-                                                toggleArchive(conversation)
+                                                toggleArchive(thread)
                                             } label: {
-                                                Label(conversation.isArchived ? "Unarchive" : "Archive",
-                                                      systemImage: conversation.isArchived ? "tray.and.arrow.up" : "archivebox")
+                                                Label(thread.isArchived ? "Unarchive" : "Archive",
+                                                      systemImage: thread.isArchived ? "tray.and.arrow.up" : "archivebox")
                                             }
                                             .tint(.indigo)
                                         }
                                         .swipeActions(edge: .leading) {
                                             Button {
-                                                togglePin(conversation)
+                                                togglePin(thread)
                                             } label: {
                                                 Label("Unpin", systemImage: "pin.slash")
                                             }
                                             .tint(.orange)
                                         }
                                         .contextMenu {
-                                            conversationContextMenu(for: conversation)
+                                            threadContextMenu(for: thread)
                                         }
                                 }
                             }
                         }
 
-                        if filteredConversations.isEmpty {
+                        if filteredThreads.isEmpty {
                             // No results for current filter
                             noResultsView
                         } else {
-                            // Group unpinned conversations by date
-                            ForEach(groupedConversations, id: \.dateGroup) { group in
+                            // Group unpinned threads by date
+                            ForEach(groupedThreads, id: \.dateGroup) { group in
                                 Section(group.dateGroup.displayName) {
-                                    ForEach(group.conversations) { conversation in
-                                        ConversationRow(conversation: conversation)
-                                            .tag(conversation.id)
+                                    ForEach(group.threads) { thread in
+                                        ThreadRow(thread: thread)
+                                            .tag(thread.id)
                                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                                                 Button(role: .destructive) {
-                                                    deleteConversation(conversation)
+                                                    deleteThread(thread)
                                                 } label: {
                                                     Label("Delete", systemImage: "trash")
                                                 }
 
                                                 Button {
-                                                    toggleArchive(conversation)
+                                                    toggleArchive(thread)
                                                 } label: {
-                                                    Label(conversation.isArchived ? "Unarchive" : "Archive",
-                                                          systemImage: conversation.isArchived ? "tray.and.arrow.up" : "archivebox")
+                                                    Label(thread.isArchived ? "Unarchive" : "Archive",
+                                                          systemImage: thread.isArchived ? "tray.and.arrow.up" : "archivebox")
                                                 }
                                                 .tint(.indigo)
                                             }
                                             .swipeActions(edge: .leading) {
                                                 Button {
-                                                    togglePin(conversation)
+                                                    togglePin(thread)
                                                 } label: {
                                                     Label("Pin", systemImage: "pin")
                                                 }
                                                 .tint(.orange)
 
                                                 Button {
-                                                    toggleStar(conversation)
+                                                    toggleStar(thread)
                                                 } label: {
-                                                    Label(conversation.isStarred ? "Unstar" : "Star",
-                                                          systemImage: conversation.isStarred ? "star.slash" : "star")
+                                                    Label(thread.isStarred ? "Unstar" : "Star",
+                                                          systemImage: thread.isStarred ? "star.slash" : "star")
                                                 }
                                                 .tint(.yellow)
                                             }
                                             .contextMenu {
-                                                conversationContextMenu(for: conversation)
+                                                threadContextMenu(for: thread)
                                             }
                                     }
                                 }
@@ -571,31 +576,31 @@ struct ConversationsView: View {
                 }
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: appState.workspace.conversations.count)
+        .animation(.easeInOut(duration: 0.2), value: appState.workspace.threads.count)
     }
 
     // MARK: - Date Grouping
 
-    private var groupedConversations: [ConversationDateGroup] {
-        let unpinned = filteredConversations.filter { !$0.isPinned }
-        var groups: [DateGroup: [Conversation]] = [:]
+    private var groupedThreads: [ThreadDateGroup] {
+        let unpinned = filteredThreads.filter { !$0.isPinned }
+        var groups: [DateGroup: [AgentKit.Thread]] = [:]
 
-        for conversation in unpinned {
-            let group = DateGroup.from(conversation.updatedAt)
-            groups[group, default: []].append(conversation)
+        for thread in unpinned {
+            let group = DateGroup.from(thread.updatedAt)
+            groups[group, default: []].append(thread)
         }
 
         // Sort groups by date (most recent first) and return
         return DateGroup.allCases.compactMap { group in
-            guard let conversations = groups[group], !conversations.isEmpty else { return nil }
-            return ConversationDateGroup(dateGroup: group, conversations: conversations)
+            guard let threads = groups[group], !threads.isEmpty else { return nil }
+            return ThreadDateGroup(dateGroup: group, threads: threads)
         }
     }
 
     private var filterChipsView: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(ConversationFilter.allCases) { filter in
+                ForEach(ThreadFilter.allCases) { filter in
                     FilterChip(
                         filter: filter,
                         count: filterCounts[filter] ?? 0,
@@ -642,7 +647,7 @@ struct ConversationsView: View {
 // MARK: - Filter Chip
 
 struct FilterChip: View {
-    let filter: ConversationFilter
+    let filter: ThreadFilter
     let count: Int
     let isSelected: Bool
     let action: () -> Void
@@ -684,7 +689,7 @@ struct FilterChip: View {
 // MARK: - Skeleton Loading Views
 
 /// Skeleton placeholder for conversation row
-struct ConversationRowSkeleton: View {
+struct ThreadRowSkeleton: View {
     var body: some View {
         HStack(spacing: Spacing.md) {
             // Avatar skeleton
@@ -723,7 +728,7 @@ struct ConversationRowSkeleton: View {
 }
 
 /// Skeleton for conversation list (multiple rows)
-struct ConversationListSkeleton: View {
+struct ThreadListSkeleton: View {
     let rowCount: Int
 
     init(rowCount: Int = 5) {
@@ -733,7 +738,7 @@ struct ConversationListSkeleton: View {
     var body: some View {
         VStack(spacing: 0) {
             ForEach(0..<rowCount, id: \.self) { _ in
-                ConversationRowSkeleton()
+                ThreadRowSkeleton()
                     .padding(.horizontal, Spacing.md)
                 Divider()
                     .padding(.leading, 56)
@@ -1033,7 +1038,7 @@ struct EmptySearchResultsState: View {
 
 // MARK: - Empty Conversation List View
 
-struct EmptyConversationListView: View {
+struct EmptyThreadListView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(ChatService.self) private var chatService
 
@@ -1047,25 +1052,25 @@ struct EmptyConversationListView: View {
                 : "Select a model first to begin chatting",
             actionLabel: chatService.isReady ? "New Chat" : "Select Model",
             action: chatService.isReady
-                ? { appState.showNewConversationSheet = true }
+                ? { appState.showNewThreadSheet = true }
                 : { appState.showModelPicker = true }
         )
     }
 }
 
-// MARK: - Conversation Row
+// MARK: - Thread Row
 
-struct ConversationRow: View {
-    let conversation: Conversation
+struct ThreadRow: View {
+    let thread: AgentKit.Thread
     @Environment(ChatService.self) private var chatService
     @State private var isHovered = false
 
     private var messageCount: Int {
-        conversation.messages.count
+        thread.messages.count
     }
 
     private var lastMessageRole: String? {
-        conversation.messages.last?.role.rawValue
+        thread.messages.last?.role.rawValue
     }
 
     var body: some View {
@@ -1089,7 +1094,7 @@ struct ConversationRow: View {
                 HStack(spacing: Spacing.sm) {
                     // Title + Agent in one line
                     HStack(spacing: Spacing.sm) {
-                        Text(conversation.title)
+                        Text(thread.title)
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -1104,13 +1109,13 @@ struct ConversationRow: View {
                     Spacer()
 
                     // Timestamp (prominent like Slack)
-                    Text(conversation.updatedAt, style: .relative)
+                    Text(thread.updatedAt, style: .relative)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 }
 
                 // Preview text with better contrast
-                Text(conversation.preview)
+                Text(thread.preview)
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -1119,18 +1124,18 @@ struct ConversationRow: View {
                 HStack(spacing: Spacing.sm) {
                     // Badges with subtle animation
                     HStack(spacing: Spacing.xs) {
-                        if conversation.isArchived {
+                        if thread.isArchived {
                             Image(systemName: "archivebox.fill")
                                 .foregroundStyle(Color.Envoy.archive)
                                 .font(.caption2)
                         }
-                        if conversation.isPinned {
+                        if thread.isPinned {
                             Image(systemName: "pin.fill")
                                 .foregroundStyle(Color.Envoy.pin)
                                 .font(.caption2)
                                 .symbolEffect(.pulse, options: .speed(0.5), isActive: isHovered)
                         }
-                        if conversation.isStarred {
+                        if thread.isStarred {
                             Image(systemName: "star.fill")
                                 .foregroundStyle(Color.Envoy.star)
                                 .font(.caption2)
@@ -1163,27 +1168,27 @@ struct ConversationRow: View {
     }
 
     private var avatarIcon: String {
-        if conversation.modelId != nil {
+        if thread.modelId != nil {
             return "sparkles"  // AI/model icon (Apple Intelligence style)
-        } else if conversation.agentName != nil {
+        } else if thread.container.agentName != nil {
             return "sparkles"  // Agent icon
         }
         return "bubble.left.and.bubble.right"
     }
 
     private var avatarColor: Color {
-        if conversation.modelId != nil {
+        if thread.modelId != nil {
             return Color.Envoy.model
-        } else if conversation.agentName != nil {
+        } else if thread.container.agentName != nil {
             return Color.Envoy.agent
         }
         return Color.Envoy.info
     }
 
     private var modelOrAgentName: String {
-        if let modelId = conversation.modelId {
+        if let modelId = thread.modelId {
             return shortModelName(modelId)
-        } else if let agentName = conversation.agentName {
+        } else if let agentName = thread.container.agentName {
             return agentName
         }
         return "Chat"
@@ -1196,8 +1201,8 @@ struct ConversationRow: View {
 
 // MARK: - Conversation Detail View
 
-struct ConversationDetailView: View {
-    let conversation: Conversation
+struct ThreadDetailView: View {
+    let thread: AgentKit.Thread
     @EnvironmentObject private var appState: AppState
     @Environment(ChatService.self) private var chatService
     @Environment(ProviderConfigManager.self) private var providerManager
@@ -1214,7 +1219,7 @@ struct ConversationDetailView: View {
 
     // Determine if this conversation uses direct model or A2A
     private var usesDirectModel: Bool {
-        conversation.modelId != nil || conversation.providerId != nil
+        thread.modelId != nil || thread.providerId != nil
     }
 
     // Check if we can send messages
@@ -1237,7 +1242,7 @@ struct ConversationDetailView: View {
             }
         } else {
             if appState.isAgentConnected {
-                return conversation.agentName ?? "Connected"
+                return thread.container.agentName ?? "Connected"
             } else {
                 return "Disconnected"
             }
@@ -1277,8 +1282,8 @@ struct ConversationDetailView: View {
             }
 
             // Statistics panel (collapsible)
-            if showStats && !conversation.messages.isEmpty {
-                ConversationStatsView(conversation: conversation)
+            if showStats && !thread.messages.isEmpty {
+                ThreadStatsView(thread: thread)
                     .padding(.horizontal)
                     .padding(.vertical, 8)
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -1289,19 +1294,19 @@ struct ConversationDetailView: View {
                 ScrollView {
                     LazyVStack(spacing: 16) {
                         // Welcome message for empty conversations
-                        if conversation.messages.isEmpty {
+                        if thread.messages.isEmpty {
                             WelcomeMessageView(
                                 modelName: chatService.providerDescription,
                                 isDirectModel: usesDirectModel,
-                                agentName: conversation.agentName,
+                                agentName: thread.container.agentName,
                                 onPromptSelected: { prompt in
                                     newMessage = prompt
                                 }
                             )
                         }
 
-                        ForEach(conversation.messages) { message in
-                            ConversationMessageBubble(message: message)
+                        ForEach(thread.messages) { message in
+                            ThreadMessageBubble(message: message)
                                 .id(message.id)
                         }
 
@@ -1323,8 +1328,8 @@ struct ConversationDetailView: View {
                     }
                     .padding()
                 }
-                .onChange(of: conversation.messages.count) { _, _ in
-                    if let lastId = conversation.messages.last?.id {
+                .onChange(of: thread.messages.count) { _, _ in
+                    if let lastId = thread.messages.last?.id {
                         withAnimation {
                             proxy.scrollTo(lastId, anchor: .bottom)
                         }
@@ -1346,19 +1351,19 @@ struct ConversationDetailView: View {
             TextField("Title", text: $newTitle)
             Button("Cancel", role: .cancel) { }
             Button("Rename") {
-                renameConversation()
+                renameThread()
             }
         }
         .alert("Delete Conversation?", isPresented: $showDeleteConfirmation) {
             Button("Cancel", role: .cancel) { }
             Button("Delete", role: .destructive) {
-                deleteConversation()
+                deleteThread()
             }
         } message: {
             Text("This action cannot be undone.")
         }
         .sheet(isPresented: $showModelPicker) {
-            ModelPickerSheet(conversation: conversation)
+            ModelPickerSheet(thread: thread)
         }
     }
 
@@ -1367,7 +1372,7 @@ struct ConversationDetailView: View {
     private var headerView: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text(conversation.title)
+                Text(thread.title)
                     .font(.title2)
                     .fontWeight(.semibold)
 
@@ -1410,7 +1415,7 @@ struct ConversationDetailView: View {
 
             Menu {
                 Button(action: {
-                    newTitle = conversation.title
+                    newTitle = thread.title
                     showRenameAlert = true
                 }) {
                     Label("Rename", systemImage: "pencil")
@@ -1427,20 +1432,20 @@ struct ConversationDetailView: View {
                 }
                 Divider()
                 Button(action: togglePin) {
-                    Label(conversation.isPinned ? "Unpin" : "Pin", systemImage: conversation.isPinned ? "pin.slash" : "pin")
+                    Label(thread.isPinned ? "Unpin" : "Pin", systemImage: thread.isPinned ? "pin.slash" : "pin")
                 }
                 Button(action: toggleStar) {
-                    Label(conversation.isStarred ? "Remove Star" : "Add Star", systemImage: conversation.isStarred ? "star.slash" : "star")
+                    Label(thread.isStarred ? "Remove Star" : "Add Star", systemImage: thread.isStarred ? "star.slash" : "star")
                 }
                 Divider()
                 Menu {
-                    Button(action: { exportConversation(format: .markdown) }) {
+                    Button(action: { exportThread(format: .markdown) }) {
                         Label("Markdown", systemImage: "doc.text")
                     }
-                    Button(action: { exportConversation(format: .json) }) {
+                    Button(action: { exportThread(format: .json) }) {
                         Label("JSON", systemImage: "curlybraces")
                     }
-                    Button(action: { exportConversation(format: .text) }) {
+                    Button(action: { exportThread(format: .text) }) {
                         Label("Plain Text", systemImage: "doc.plaintext")
                     }
                 } label: {
@@ -1468,7 +1473,7 @@ struct ConversationDetailView: View {
         }
         if usesDirectModel {
             return "Ask \(shortModelName(chatService.providerDescription)) anything..."
-        } else if let agent = conversation.agentName {
+        } else if let agent = thread.container.agentName {
             return "Message \(agent)..."
         }
         return "Type a message..."
@@ -1526,27 +1531,27 @@ struct ConversationDetailView: View {
     // MARK: - Actions
 
     private func togglePin() {
-        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-            appState.workspace.conversations[index].isPinned.toggle()
+        if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+            appState.workspace.threads[index].isPinned.toggle()
         }
     }
 
     private func toggleStar() {
-        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-            appState.workspace.conversations[index].isStarred.toggle()
+        if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+            appState.workspace.threads[index].isStarred.toggle()
         }
     }
 
-    private func renameConversation() {
+    private func renameThread() {
         guard !newTitle.isEmpty else { return }
-        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-            appState.workspace.conversations[index].title = newTitle
+        if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+            appState.workspace.threads[index].title = newTitle
         }
     }
 
-    private func deleteConversation() {
-        appState.workspace.conversations.removeAll { $0.id == conversation.id }
-        appState.selectedConversationId = nil
+    private func deleteThread() {
+        appState.workspace.threads.removeAll { $0.id == thread.id }
+        appState.selectedThreadId = nil
     }
 
     enum ExportFormat {
@@ -1569,7 +1574,7 @@ struct ConversationDetailView: View {
         }
     }
 
-    private func exportConversation(format: ExportFormat) {
+    private func exportThread(format: ExportFormat) {
         let content: String
 
         switch format {
@@ -1584,7 +1589,7 @@ struct ConversationDetailView: View {
         // Show save panel
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.init(filenameExtension: format.fileExtension) ?? .plainText]
-        panel.nameFieldStringValue = "\(conversation.title).\(format.fileExtension)"
+        panel.nameFieldStringValue = "\(thread.title).\(format.fileExtension)"
         panel.canCreateDirectories = true
 
         if panel.runModal() == .OK, let url = panel.url {
@@ -1598,21 +1603,21 @@ struct ConversationDetailView: View {
 
     private func exportAsMarkdown() -> String {
         var lines: [String] = []
-        lines.append("# \(conversation.title)")
+        lines.append("# \(thread.title)")
         lines.append("")
         lines.append("*Exported \(Date().formatted())*")
-        if let modelId = conversation.modelId {
+        if let modelId = thread.modelId {
             lines.append("*Model: \(modelId)*")
         }
         lines.append("")
         lines.append("---")
         lines.append("")
 
-        for message in conversation.messages {
+        for message in thread.messages {
             let role = message.role == .user ? "**User**" : "**Assistant**"
             lines.append("\(role):")
             lines.append("")
-            lines.append(message.content)
+            lines.append(message.textContent)
             lines.append("")
         }
 
@@ -1621,13 +1626,13 @@ struct ConversationDetailView: View {
 
     private func exportAsJSON() -> String {
         let exportData: [String: Any] = [
-            "title": conversation.title,
-            "modelId": conversation.modelId ?? "",
-            "createdAt": ISO8601DateFormatter().string(from: conversation.createdAt),
-            "messages": conversation.messages.map { msg in
+            "title": thread.title,
+            "modelId": thread.modelId ?? "",
+            "createdAt": ISO8601DateFormatter().string(from: thread.createdAt),
+            "messages": thread.messages.map { msg in
                 [
                     "role": msg.role.rawValue,
-                    "content": msg.content,
+                    "content": msg.textContent,
                     "timestamp": ISO8601DateFormatter().string(from: msg.timestamp)
                 ]
             }
@@ -1642,14 +1647,14 @@ struct ConversationDetailView: View {
 
     private func exportAsText() -> String {
         var lines: [String] = []
-        lines.append(conversation.title)
-        lines.append(String(repeating: "=", count: conversation.title.count))
+        lines.append(thread.title)
+        lines.append(String(repeating: "=", count: thread.title.count))
         lines.append("")
 
-        for message in conversation.messages {
+        for message in thread.messages {
             let role = message.role == .user ? "User" : "Assistant"
             lines.append("[\(role)]")
-            lines.append(message.content)
+            lines.append(message.textContent)
             lines.append("")
         }
 
@@ -1660,12 +1665,12 @@ struct ConversationDetailView: View {
         guard !newMessage.isEmpty else { return }
 
         let messageContent = newMessage
-        let userMessage = ConversationMessage(role: .user, content: messageContent)
+        let userMessage = AgentKit.ThreadMessage.user(messageContent)
 
         // Add user message to conversation
-        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-            appState.workspace.conversations[index].messages.append(userMessage)
-            appState.workspace.conversations[index].updatedAt = Date()
+        if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+            appState.workspace.threads[index].messages.append(userMessage)
+            appState.workspace.threads[index].updatedAt = Date()
         }
 
         newMessage = ""
@@ -1684,8 +1689,8 @@ struct ConversationDetailView: View {
         Task {
             do {
                 // Build history from conversation
-                let history = conversation.messages.dropLast().map { msg in
-                    ChatMessage(content: msg.content, isUser: msg.role == .user)
+                let history = thread.messages.dropLast().map { msg in
+                    ChatMessage(content: msg.textContent, isUser: msg.role == .user)
                 }
 
                 // Get system prompt if we have an agent template
@@ -1704,29 +1709,17 @@ struct ConversationDetailView: View {
 
                 // Add assistant response to conversation
                 if !streamingResponse.isEmpty {
-                    let assistantMessage = ConversationMessage(
-                        role: .assistant,
-                        content: streamingResponse,
-                        metadata: MessageMetadata(
-                            model: chatService.loadedModelId,
-                            provider: chatService.selectedProvider?.name,
-                            tokens: chatService.generationStats?.tokensGenerated,
-                            latency: chatService.generationStats?.totalDuration
-                        )
-                    )
-                    if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-                        appState.workspace.conversations[index].messages.append(assistantMessage)
-                        appState.workspace.conversations[index].updatedAt = Date()
+                    let assistantMessage = AgentKit.ThreadMessage.assistant(streamingResponse)
+                    if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+                        appState.workspace.threads[index].messages.append(assistantMessage)
+                        appState.workspace.threads[index].updatedAt = Date()
                     }
                 }
             } catch {
                 errorMessage = error.localizedDescription
-                let errMsg = ConversationMessage(
-                    role: .assistant,
-                    content: "Sorry, I encountered an error: \(error.localizedDescription)"
-                )
-                if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-                    appState.workspace.conversations[index].messages.append(errMsg)
+                let errMsg = AgentKit.ThreadMessage.assistant("Sorry, I encountered an error: \(error.localizedDescription)")
+                if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+                    appState.workspace.threads[index].messages.append(errMsg)
                 }
             }
 
@@ -1744,8 +1737,8 @@ struct ConversationDetailView: View {
 
         Task {
             do {
-                let stream = try await appState.sendConversationMessage(
-                    conversationId: conversation.id,
+                let stream = try await appState.sendThreadMessage(
+                    threadId: thread.id,
                     content: content
                 )
 
@@ -1753,12 +1746,9 @@ struct ConversationDetailView: View {
                     streamingResponse += delta
                 }
             } catch {
-                let errMsg = ConversationMessage(
-                    role: .assistant,
-                    content: "Sorry, I encountered an error: \(error.localizedDescription)"
-                )
-                if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-                    appState.workspace.conversations[index].messages.append(errMsg)
+                let errMsg = AgentKit.ThreadMessage.assistant("Sorry, I encountered an error: \(error.localizedDescription)")
+                if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+                    appState.workspace.threads[index].messages.append(errMsg)
                 }
                 errorMessage = error.localizedDescription
             }
@@ -1769,8 +1759,8 @@ struct ConversationDetailView: View {
     }
 
     private func getSystemPrompt() -> String? {
-        // Check if conversation has an associated agent template
-        if let agentName = conversation.agentName,
+        // Check if thread has an associated agent template
+        if let agentName = thread.container.agentName,
            let template = AgentTemplate.allTemplates.first(where: { $0.name == agentName }) {
             return template.systemPrompt
         }
@@ -1781,7 +1771,7 @@ struct ConversationDetailView: View {
 // MARK: - Model Picker Sheet
 
 struct ModelPickerSheet: View {
-    let conversation: Conversation
+    let thread: AgentKit.Thread
     @EnvironmentObject private var appState: AppState
     @Environment(ChatService.self) private var chatService
     @Environment(ProviderConfigManager.self) private var providerManager
@@ -2018,11 +2008,11 @@ struct ModelPickerSheet: View {
                     try await chatService.selectProvider(updatedProvider)
                 }
 
-                // Update conversation with model info
-                if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-                    appState.workspace.conversations[index].modelId = modelId
-                    appState.workspace.conversations[index].providerId = provider.id.uuidString
-                    appState.workspace.conversations[index].agentName = nil
+                // Update thread with model info
+                if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+                    appState.workspace.threads[index].modelId = modelId
+                    appState.workspace.threads[index].providerId = provider.id.uuidString
+                    // Note: container determines agent association, not a separate agentName property
                 }
 
                 dismiss()
@@ -2035,10 +2025,10 @@ struct ModelPickerSheet: View {
 
     private func selectA2AAgent() {
         // Clear model selection, use A2A instead
-        if let index = appState.workspace.conversations.firstIndex(where: { $0.id == conversation.id }) {
-            appState.workspace.conversations[index].modelId = nil
-            appState.workspace.conversations[index].providerId = nil
-            appState.workspace.conversations[index].agentName = appState.localAgent?.name ?? "Local Agent"
+        if let index = appState.workspace.threads.firstIndex(where: { $0.id == thread.id }) {
+            appState.workspace.threads[index].modelId = nil
+            appState.workspace.threads[index].providerId = nil
+            // Agent association is determined by container, not a separate property
         }
         dismiss()
     }
@@ -2143,8 +2133,8 @@ struct StreamingMessageView: View {
 
 // MARK: - Conversation Message Bubble
 
-struct ConversationMessageBubble: View {
-    let message: ConversationMessage
+struct ThreadMessageBubble: View {
+    let message: AgentKit.ThreadMessage
     var onRegenerate: (() -> Void)? = nil
     @State private var isHovered = false
     @State private var showCopiedFeedback = false
@@ -2193,9 +2183,9 @@ struct ConversationMessageBubble: View {
                 }
 
                 // Message content with action buttons as overlay (prevents layout shift)
-                Text(message.content)
+                // Uses MarkdownText for proper markdown rendering
+                MarkdownText(message.textContent, isUserMessage: isUser)
                     .font(Font.Envoy.bodyPrimary)
-                    .textSelection(.enabled)
                     .padding(.horizontal, Spacing.lg)
                     .padding(.vertical, Spacing.md)
                     .background(
@@ -2276,7 +2266,7 @@ struct ConversationMessageBubble: View {
 
     private func copyToClipboard() {
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(message.content, forType: .string)
+        NSPasteboard.general.setString(message.textContent, forType: .string)
         FeedbackManager.copied()
 
         withAnimation(.spring(response: 0.3, dampingFraction: 0.6)) {
@@ -2293,6 +2283,77 @@ struct ConversationMessageBubble: View {
     private func shortModelName(_ modelId: String) -> String {
         modelId.components(separatedBy: "/").last ?? modelId
     }
+}
+
+// MARK: - Markdown Text View
+
+/// Renders markdown content with proper formatting
+/// Renders markdown content with proper formatting using MarkdownUI
+struct MarkdownText: View {
+    let content: String
+    let isUserMessage: Bool
+
+    init(_ content: String, isUserMessage: Bool = false) {
+        self.content = content
+        self.isUserMessage = isUserMessage
+    }
+
+    var body: some View {
+        Markdown(content)
+            .markdownTheme(isUserMessage ? .userMessage : .assistantMessage)
+            .textSelection(.enabled)
+    }
+}
+
+// MARK: - Markdown Themes
+
+extension MarkdownUI.Theme {
+    /// Theme for user messages (light text on accent background)
+    @MainActor static let userMessage = Theme.basic
+
+    /// Theme for assistant messages - softer, more readable styling
+    @MainActor static let assistantMessage = Theme()
+        .text {
+            ForegroundColor(.primary.opacity(0.85))
+            FontSize(14)
+        }
+        .strong {
+            FontWeight(.medium)  // Softer than bold
+        }
+        .heading1 { configuration in
+            configuration.label
+                .markdownTextStyle {
+                    FontWeight(.semibold)
+                    FontSize(18)
+                }
+                .padding(.bottom, 4)
+        }
+        .heading2 { configuration in
+            configuration.label
+                .markdownTextStyle {
+                    FontWeight(.medium)
+                    FontSize(16)
+                }
+                .padding(.bottom, 2)
+        }
+        .heading3 { configuration in
+            configuration.label
+                .markdownTextStyle {
+                    FontWeight(.medium)
+                    FontSize(15)
+                }
+        }
+        .paragraph { configuration in
+            configuration.label
+                .lineSpacing(3)
+                .padding(.bottom, 6)
+        }
+        .listItem { configuration in
+            configuration.label
+                .markdownTextStyle {
+                    FontSize(14)
+                }
+        }
 }
 
 // MARK: - Message Action Button
@@ -2340,7 +2401,7 @@ struct MessageActionButton: View {
 
 // MARK: - Empty State
 
-struct EmptyConversationDetailView: View {
+struct EmptyThreadDetailView: View {
     @EnvironmentObject private var appState: AppState
     @Environment(ChatService.self) private var chatService
     @State private var showModelPicker = false
@@ -2373,7 +2434,7 @@ struct EmptyConversationDetailView: View {
             // Actions
             VStack(spacing: 12) {
                 if chatService.isReady {
-                    Button(action: { appState.showNewConversationSheet = true }) {
+                    Button(action: { appState.showNewThreadSheet = true }) {
                         Label("New Conversation", systemImage: "plus.circle")
                     }
                     .buttonStyle(.borderedProminent)
@@ -2588,17 +2649,17 @@ struct QuickModelSetupSheet: View {
 
 // MARK: - New Conversation Sheet
 
-struct NewConversationSheet: View {
+struct NewThreadSheet: View {
     @EnvironmentObject private var appState: AppState
     @Environment(ChatService.self) private var chatService
     @Environment(ProviderConfigManager.self) private var providerManager
     @Environment(\.dismiss) private var dismiss
     @State private var title = ""
-    @State private var selectedMode: ConversationMode = .directModel
+    @State private var selectedMode: ThreadMode = .directModel
     @State private var selectedProviderId: UUID?
     @State private var selectedAgentTemplate: AgentTemplate?
 
-    enum ConversationMode: String, CaseIterable {
+    enum ThreadMode: String, CaseIterable {
         case directModel = "Direct Model"
         case agent = "Agent Template"
         case a2aAgent = "A2A Agent"
@@ -2614,7 +2675,7 @@ struct NewConversationSheet: View {
 
             // Mode picker
             Picker("Mode", selection: $selectedMode) {
-                ForEach(ConversationMode.allCases, id: \.self) { mode in
+                ForEach(ThreadMode.allCases, id: \.self) { mode in
                     Text(mode.rawValue).tag(mode)
                 }
             }
@@ -2640,7 +2701,7 @@ struct NewConversationSheet: View {
                 Spacer()
 
                 Button("Create") {
-                    createConversation()
+                    createThread()
                 }
                 .keyboardShortcut(.return)
                 .buttonStyle(.borderedProminent)
@@ -2760,28 +2821,46 @@ struct NewConversationSheet: View {
         }
     }
 
-    private func createConversation() {
-        var conversation = Conversation(
-            title: title.isEmpty ? generateTitle() : title
-        )
+    private func createThread() {
+        let container: AgentKit.ThreadContainer
+        var newThread: AgentKit.Thread
 
         switch selectedMode {
         case .directModel:
-            conversation.modelId = chatService.loadedModelId
-            conversation.providerId = chatService.selectedProvider?.id.uuidString
+            container = .global
+            newThread = AgentKit.Thread(
+                title: title.isEmpty ? generateTitle() : title,
+                container: container,
+                modelId: chatService.loadedModelId,
+                providerId: chatService.selectedProvider?.id.uuidString
+            )
 
         case .agent:
             if let template = selectedAgentTemplate {
-                conversation.agentName = template.name
-                conversation.title = title.isEmpty ? "Chat with \(template.name)" : title
+                container = .agent(template.name)
+                newThread = AgentKit.Thread(
+                    title: title.isEmpty ? "Chat with \(template.name)" : title,
+                    container: container
+                )
+            } else {
+                container = .global
+                newThread = AgentKit.Thread(
+                    title: title.isEmpty ? generateTitle() : title,
+                    container: container
+                )
             }
 
         case .a2aAgent:
-            conversation.agentName = appState.localAgent?.name ?? "Local Agent"
+            let agentName = appState.localAgent?.name ?? "Local Agent"
+            container = .agent(agentName)
+            newThread = AgentKit.Thread(
+                title: title.isEmpty ? generateTitle() : title,
+                container: container
+            )
         }
 
-        appState.workspace.conversations.insert(conversation, at: 0)
-        appState.selectedConversationId = conversation.id
+        appState.workspace.threads.insert(newThread, at: 0)
+        appState.selectedThreadId = newThread.id
         dismiss()
     }
 
@@ -3035,25 +3114,25 @@ struct WelcomeSuggestionChip: View {
 
 // MARK: - Conversation Statistics View
 
-struct ConversationStatsView: View {
-    let conversation: Conversation
+struct ThreadStatsView: View {
+    let thread: AgentKit.Thread
     @State private var isExpanded = false
 
     // Computed statistics
     private var totalTokens: Int {
-        conversation.messages.compactMap { $0.metadata?.tokens }.reduce(0, +)
+        thread.messages.compactMap { $0.metadata?.tokens }.reduce(0, +)
     }
 
     private var totalMessages: Int {
-        conversation.messages.count
+        thread.messages.count
     }
 
     private var userMessages: Int {
-        conversation.messages.filter { $0.role == .user }.count
+        thread.messages.filter { $0.role == .user }.count
     }
 
     private var assistantMessages: Int {
-        conversation.messages.filter { $0.role == .assistant }.count
+        thread.messages.filter { $0.role == .assistant }.count
     }
 
     private var averageTokensPerMessage: Int {
@@ -3062,8 +3141,8 @@ struct ConversationStatsView: View {
     }
 
     private var conversationDuration: String {
-        guard let first = conversation.messages.first?.timestamp,
-              let last = conversation.messages.last?.timestamp else {
+        guard let first = thread.messages.first?.timestamp,
+              let last = thread.messages.last?.timestamp else {
             return "N/A"
         }
         let duration = last.timeIntervalSince(first)
@@ -3077,7 +3156,7 @@ struct ConversationStatsView: View {
     }
 
     private var averageLatency: String {
-        let latencies = conversation.messages.compactMap { $0.metadata?.latencyMs }
+        let latencies = thread.messages.compactMap { $0.metadata?.latencyMs }
         guard !latencies.isEmpty else { return "N/A" }
         let avgMs = latencies.reduce(0, +) / latencies.count
         return String(format: "%.1fs", Double(avgMs) / 1000)
@@ -3197,9 +3276,9 @@ struct ConversationStatsView: View {
 
     private func estimateUserTokens() -> Int {
         // Rough estimate: ~4 chars per token
-        let userChars = conversation.messages
+        let userChars = thread.messages
             .filter { $0.role == .user }
-            .map { $0.content.count }
+            .map { $0.textContent.count }
             .reduce(0, +)
         return userChars / 4
     }
