@@ -54,8 +54,8 @@ public enum MemorySource: Codable, Sendable, Equatable {
     /// From an OpenSpace capture
     case capture(captureId: String)
 
-    /// From an agent conversation
-    case conversation(sessionId: String, messageId: String?)
+    /// From a thread message
+    case thread(threadId: String, messageId: String)
 
     /// From a reading list item
     case readingList(url: String, title: String?)

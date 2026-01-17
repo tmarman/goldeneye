@@ -92,6 +92,65 @@ public actor MemoryStore {
         }
     }
 
+    /// Index a thread message from the unified Thread model
+    public func indexThreadMessage(_ message: ThreadMessage, thread: Thread) async throws {
+        // Skip very short messages
+        let content = message.textContent
+        guard content.count > 20 else { return }
+
+        let itemId = MemoryItemID("thread-\(thread.id.rawValue)-\(message.id.uuidString)")
+
+        // Extract spaceId from container
+        let spaceId: String?
+        switch thread.container {
+        case .space(let id): spaceId = id
+        case .agent, .group, .global: spaceId = nil
+        }
+
+        let item = MemoryItem(
+            id: itemId,
+            content: content,
+            source: .thread(threadId: thread.id.rawValue, messageId: message.id.uuidString),
+            metadata: MemoryMetadata(
+                spaceId: spaceId,
+                title: thread.title,
+                wordCount: content.split(separator: " ").count,
+                customFields: [
+                    "role": message.role.rawValue,
+                    "sender": message.sender.displayName,
+                    "container": containerString(thread.container)
+                ]
+            )
+        )
+
+        try await addItem(item)
+    }
+
+    /// Index all messages in a thread
+    public func indexThread(_ thread: Thread) async throws {
+        for message in thread.messages {
+            try await indexThreadMessage(message, thread: thread)
+        }
+    }
+
+    /// Delete all indexed content for a thread
+    public func deleteThreadIndex(_ threadId: ThreadID) async throws {
+        let prefix = "thread-\(threadId.rawValue)-"
+        let itemsToDelete = itemMetadata.keys.filter { $0.rawValue.hasPrefix(prefix) }
+        for id in itemsToDelete {
+            try await deleteItem(id)
+        }
+    }
+
+    private func containerString(_ container: ThreadContainer) -> String {
+        switch container {
+        case .space(let id): return "space:\(id)"
+        case .agent(let name): return "agent:\(name)"
+        case .group(let id): return "group:\(id)"
+        case .global: return "global"
+        }
+    }
+
     /// Index a capture from OpenSpace
     public func indexCapture(_ capture: Capture) async throws {
         let itemId = MemoryItemID("capture-\(capture.id)")
@@ -312,7 +371,7 @@ public actor MemoryStore {
             switch item.source {
             case .document: key = "Documents"
             case .capture: key = "Captures"
-            case .conversation: key = "Conversations"
+            case .thread: key = "Threads"
             case .readingList: key = "Reading List"
             case .shared: key = "Shared"
             case .externalImport: key = "Imports"
@@ -356,7 +415,7 @@ public struct MemoryFilter: Sendable {
     public var dateRange: ClosedRange<Date>?
 
     public enum SourceType: Sendable {
-        case document, capture, conversation, readingList, shared, externalImport, agentGenerated
+        case document, capture, thread, readingList, shared, externalImport, agentGenerated
     }
 
     public init(
@@ -396,7 +455,7 @@ public struct MemoryFilter: Sendable {
             switch item.source {
             case .document: itemSourceType = .document
             case .capture: itemSourceType = .capture
-            case .conversation: itemSourceType = .conversation
+            case .thread: itemSourceType = .thread
             case .readingList: itemSourceType = .readingList
             case .shared: itemSourceType = .shared
             case .externalImport: itemSourceType = .externalImport
