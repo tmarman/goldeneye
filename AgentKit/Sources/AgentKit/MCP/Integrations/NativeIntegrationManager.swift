@@ -36,8 +36,17 @@ import Foundation
 public actor NativeIntegrationManager {
     // MARK: - Integrations
 
+    // Third-party
     private var slackIntegration: SlackIntegration?
     private var quipIntegration: QuipIntegration?
+
+    // Apple Native (EventKit)
+    private var remindersIntegration: RemindersIntegration?
+
+    // Apple Native (AppleScript/URL)
+    private var notesIntegration: AppleNotesIntegration?
+    private var mailIntegration: AppleMailIntegration?
+    private var messagesIntegration: AppleMessagesIntegration?
 
     // MARK: - State
 
@@ -51,7 +60,26 @@ public actor NativeIntegrationManager {
 
     // MARK: - Configuration
 
-    /// Configure Slack integration with a bot token
+    /// Configure Slack integration with bot and/or user tokens
+    /// - Parameters:
+    ///   - botToken: Bot token (xoxb-...) for bot operations
+    ///   - userToken: User token (xoxp-...) for user-scoped operations
+    public func configureSlack(botToken: String? = nil, userToken: String? = nil) {
+        let hasBot = !(botToken?.isEmpty ?? true)
+        let hasUser = !(userToken?.isEmpty ?? true)
+
+        guard hasBot || hasUser else {
+            slackIntegration = nil
+            return
+        }
+
+        slackIntegration = SlackIntegration(
+            botToken: hasBot ? botToken : nil,
+            userToken: hasUser ? userToken : nil
+        )
+    }
+
+    /// Legacy: Configure Slack with single token (auto-detects type)
     public func configureSlack(token: String) {
         guard !token.isEmpty else {
             slackIntegration = nil
@@ -74,9 +102,100 @@ public actor NativeIntegrationManager {
         slackIntegration != nil
     }
 
+    /// Get Slack token status
+    public func slackTokenStatus() async -> (hasBot: Bool, hasUser: Bool) {
+        guard let slack = slackIntegration else {
+            return (false, false)
+        }
+        return await slack.tokenStatus
+    }
+
     /// Check if Quip is configured
     public var hasQuip: Bool {
         quipIntegration != nil
+    }
+
+    /// Configure Reminders integration (uses EventKit)
+    public func configureReminders(enabled: Bool = true) async {
+        if enabled {
+            let integration = RemindersIntegration()
+            let granted = try? await integration.requestAccess()
+            if granted == true {
+                remindersIntegration = integration
+            } else {
+                remindersIntegration = nil
+            }
+        } else {
+            remindersIntegration = nil
+        }
+    }
+
+    /// Check if Reminders is configured
+    public var hasReminders: Bool {
+        remindersIntegration != nil
+    }
+
+    /// Configure Apple Notes integration
+    public func configureNotes(enabled: Bool = true) {
+        if enabled {
+            notesIntegration = AppleNotesIntegration()
+        } else {
+            notesIntegration = nil
+        }
+    }
+
+    /// Check if Notes is configured
+    public var hasNotes: Bool {
+        notesIntegration != nil
+    }
+
+    /// Configure Apple Mail integration
+    public func configureMail(enabled: Bool = true) {
+        if enabled {
+            mailIntegration = AppleMailIntegration()
+        } else {
+            mailIntegration = nil
+        }
+    }
+
+    /// Check if Mail is configured
+    public var hasMail: Bool {
+        mailIntegration != nil
+    }
+
+    /// Configure Apple Messages integration
+    public func configureMessages(enabled: Bool = true) {
+        if enabled {
+            messagesIntegration = AppleMessagesIntegration()
+        } else {
+            messagesIntegration = nil
+        }
+    }
+
+    /// Check if Messages is configured
+    public var hasMessages: Bool {
+        messagesIntegration != nil
+    }
+
+    /// Configure all Apple integrations at once
+    public func configureAppleIntegrations(
+        reminders: Bool = true,
+        notes: Bool = true,
+        mail: Bool = true,
+        messages: Bool = true
+    ) async {
+        if reminders {
+            await configureReminders(enabled: true)
+        }
+        if notes {
+            configureNotes(enabled: true)
+        }
+        if mail {
+            configureMail(enabled: true)
+        }
+        if messages {
+            configureMessages(enabled: true)
+        }
     }
 
     // MARK: - Status
@@ -115,6 +234,66 @@ public actor NativeIntegrationManager {
             ))
         }
 
+        if let reminders = remindersIntegration {
+            let tools = await reminders.tools
+            statuses.append(IntegrationStatus(
+                name: "Reminders",
+                isConfigured: true,
+                toolCount: tools.count
+            ))
+        } else {
+            statuses.append(IntegrationStatus(
+                name: "Reminders",
+                isConfigured: false,
+                toolCount: 0
+            ))
+        }
+
+        if let notes = notesIntegration {
+            let tools = await notes.tools
+            statuses.append(IntegrationStatus(
+                name: "Notes",
+                isConfigured: true,
+                toolCount: tools.count
+            ))
+        } else {
+            statuses.append(IntegrationStatus(
+                name: "Notes",
+                isConfigured: false,
+                toolCount: 0
+            ))
+        }
+
+        if let mail = mailIntegration {
+            let tools = await mail.tools
+            statuses.append(IntegrationStatus(
+                name: "Mail",
+                isConfigured: true,
+                toolCount: tools.count
+            ))
+        } else {
+            statuses.append(IntegrationStatus(
+                name: "Mail",
+                isConfigured: false,
+                toolCount: 0
+            ))
+        }
+
+        if let messages = messagesIntegration {
+            let tools = await messages.tools
+            statuses.append(IntegrationStatus(
+                name: "Messages",
+                isConfigured: true,
+                toolCount: tools.count
+            ))
+        } else {
+            statuses.append(IntegrationStatus(
+                name: "Messages",
+                isConfigured: false,
+                toolCount: 0
+            ))
+        }
+
         return statuses
     }
 
@@ -130,6 +309,22 @@ public actor NativeIntegrationManager {
 
         if let quip = quipIntegration {
             tools.append(contentsOf: await quip.tools)
+        }
+
+        if let reminders = remindersIntegration {
+            tools.append(contentsOf: await reminders.tools)
+        }
+
+        if let notes = notesIntegration {
+            tools.append(contentsOf: await notes.tools)
+        }
+
+        if let mail = mailIntegration {
+            tools.append(contentsOf: await mail.tools)
+        }
+
+        if let messages = messagesIntegration {
+            tools.append(contentsOf: await messages.tools)
         }
 
         return tools
@@ -164,6 +359,38 @@ public actor NativeIntegrationManager {
             }
             let safeArgs = try JSONSerialization.jsonObject(with: argsData) as? [String: Any] ?? [:]
             return try await quip.callTool(name, arguments: safeArgs)
+        }
+
+        if name.hasPrefix("reminders_") {
+            guard let reminders = remindersIntegration else {
+                throw NativeIntegrationError.integrationNotConfigured("Reminders")
+            }
+            let safeArgs = try JSONSerialization.jsonObject(with: argsData) as? [String: Any] ?? [:]
+            return try await reminders.callTool(name, arguments: safeArgs)
+        }
+
+        if name.hasPrefix("notes_") {
+            guard let notes = notesIntegration else {
+                throw NativeIntegrationError.integrationNotConfigured("Notes")
+            }
+            let safeArgs = try JSONSerialization.jsonObject(with: argsData) as? [String: Any] ?? [:]
+            return try await notes.callTool(name, arguments: safeArgs)
+        }
+
+        if name.hasPrefix("mail_") {
+            guard let mail = mailIntegration else {
+                throw NativeIntegrationError.integrationNotConfigured("Mail")
+            }
+            let safeArgs = try JSONSerialization.jsonObject(with: argsData) as? [String: Any] ?? [:]
+            return try await mail.callTool(name, arguments: safeArgs)
+        }
+
+        if name.hasPrefix("messages_") {
+            guard let messages = messagesIntegration else {
+                throw NativeIntegrationError.integrationNotConfigured("Messages")
+            }
+            let safeArgs = try JSONSerialization.jsonObject(with: argsData) as? [String: Any] ?? [:]
+            return try await messages.callTool(name, arguments: safeArgs)
         }
 
         throw NativeIntegrationError.unknownTool(name)

@@ -12,6 +12,10 @@ import Foundation
 
 /// Native Slack integration providing MCP-style tools for agent use.
 ///
+/// Supports both bot tokens (xoxb-) and user tokens (xoxp-) for comprehensive access:
+/// - Bot tokens: Post as bot, react to messages, channel operations
+/// - User tokens: Search DMs, access private conversations, post as user
+///
 /// Exposes common Slack operations:
 /// - Send messages to channels or DMs
 /// - List channels
@@ -21,7 +25,7 @@ import Foundation
 ///
 /// Usage:
 /// ```swift
-/// let slack = SlackIntegration(token: "xoxb-your-token")
+/// let slack = SlackIntegration(botToken: "xoxb-...", userToken: "xoxp-...")
 /// let tools = slack.tools
 /// let result = try await slack.callTool("slack_send_message", arguments: [
 ///     "channel": "C1234567890",
@@ -29,8 +33,11 @@ import Foundation
 /// ])
 /// ```
 public actor SlackIntegration {
-    /// Slack Bot Token (xoxb-...)
-    private let token: String
+    /// Slack Bot Token (xoxb-...) for bot operations
+    private let botToken: String?
+
+    /// Slack User Token (xoxp-...) for user-scoped operations
+    private let userToken: String?
 
     /// Base URL for Slack API
     private let baseURL = URL(string: "https://slack.com/api")!
@@ -41,12 +48,94 @@ public actor SlackIntegration {
     /// URL session for API calls
     private let session: URLSession
 
-    public init(token: String) {
-        self.token = token
+    /// Token type for API method routing
+    public enum TokenType {
+        case bot
+        case user
+        case preferUser  // Use user token if available, fall back to bot
+        case preferBot   // Use bot token if available, fall back to user
+    }
+
+    /// Initialize with both token types (either or both can be provided)
+    public init(botToken: String? = nil, userToken: String? = nil) {
+        self.botToken = botToken?.isEmpty == true ? nil : botToken
+        self.userToken = userToken?.isEmpty == true ? nil : userToken
 
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 30
         self.session = URLSession(configuration: config)
+    }
+
+    /// Legacy initializer for backwards compatibility
+    public init(token: String) {
+        // Auto-detect token type based on prefix
+        if token.hasPrefix("xoxp-") {
+            self.userToken = token
+            self.botToken = nil
+        } else {
+            self.botToken = token
+            self.userToken = nil
+        }
+
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 30
+        self.session = URLSession(configuration: config)
+    }
+
+    /// Check if any token is configured
+    public var isConfigured: Bool {
+        botToken != nil || userToken != nil
+    }
+
+    /// Check which tokens are available
+    public var tokenStatus: (hasBot: Bool, hasUser: Bool) {
+        (botToken != nil, userToken != nil)
+    }
+
+    /// Select the appropriate token for an API method
+    private func selectToken(for method: String, preference: TokenType = .preferBot) -> String? {
+        // Methods that require or work better with user tokens
+        let userPreferredMethods = [
+            "search.messages",      // Search includes user's DMs
+            "search.files",         // File search across all accessible content
+            "users.profile.set",    // Modify user's own profile
+            "stars.add",            // Star items as the user
+            "stars.remove",
+            "stars.list",
+            "reminders.add",        // Create reminders for the user
+            "reminders.complete",
+            "reminders.delete",
+            "reminders.list"
+        ]
+
+        // Methods that should use bot token (appear as bot)
+        let botPreferredMethods = [
+            "chat.postMessage",     // Post as bot (unless explicitly as user)
+            "reactions.add",        // React as bot
+            "reactions.remove"
+        ]
+
+        // Determine preference based on method
+        let effectivePreference: TokenType
+        if userPreferredMethods.contains(method) {
+            effectivePreference = .preferUser
+        } else if botPreferredMethods.contains(method) {
+            effectivePreference = .preferBot
+        } else {
+            effectivePreference = preference
+        }
+
+        // Select token based on preference and availability
+        switch effectivePreference {
+        case .bot:
+            return botToken
+        case .user:
+            return userToken
+        case .preferUser:
+            return userToken ?? botToken
+        case .preferBot:
+            return botToken ?? userToken
+        }
     }
 
     // MARK: - Tool Discovery
@@ -63,7 +152,8 @@ public actor SlackIntegration {
                         "channel": ["type": "string", "description": "Channel ID (C...) or user ID (U...) for DM"],
                         "text": ["type": "string", "description": "Message text (supports Slack markdown)"],
                         "thread_ts": ["type": "string", "description": "Optional: Reply in thread to this message timestamp"],
-                        "unfurl_links": ["type": "boolean", "description": "Whether to unfurl links in the message"]
+                        "unfurl_links": ["type": "boolean", "description": "Whether to unfurl links in the message"],
+                        "as_user": ["type": "boolean", "description": "If true, post as the authenticated user (requires user token)"]
                     ],
                     "required": ["channel", "text"]
                 ]
@@ -161,6 +251,8 @@ public actor SlackIntegration {
             return errorResult("Missing required: channel and text")
         }
 
+        let asUser = args["as_user"] as? Bool ?? false
+
         var params: [String: Any] = [
             "channel": channel,
             "text": text
@@ -173,12 +265,15 @@ public actor SlackIntegration {
             params["unfurl_links"] = unfurl
         }
 
-        let response = try await apiCall("chat.postMessage", params: params)
+        // Use user token if posting as user, otherwise prefer bot token
+        let tokenPreference: TokenType = asUser ? .preferUser : .preferBot
+        let response = try await apiCall("chat.postMessage", params: params, tokenPreference: tokenPreference)
 
         if let ok = response["ok"] as? Bool, ok {
             let ts = response["ts"] as? String ?? "unknown"
             let channelId = response["channel"] as? String ?? channel
-            return successResult("Message sent to \(channelId) (ts: \(ts))")
+            let poster = asUser ? "as user" : "as bot"
+            return successResult("Message sent to \(channelId) \(poster) (ts: \(ts))")
         } else {
             let error = response["error"] as? String ?? "Unknown error"
             return errorResult("Failed to send message: \(error)")
@@ -324,9 +419,27 @@ public actor SlackIntegration {
         }
     }
 
+    // MARK: - Raw API Access (for indexers)
+
+    /// Direct API access for internal use (e.g., SlackIndexer)
+    /// Returns JSON-encoded Data to avoid Sendable issues across actor boundaries
+    public func rawAPI(_ method: String, params: [String: Any]) async throws -> Data {
+        let result = try await apiCall(method, params: params)
+        return try JSONSerialization.data(withJSONObject: result)
+    }
+
+    /// Convenience for when caller handles JSON themselves
+    public func rawAPIDict(_ method: String, params: [String: Any]) async throws -> [String: Any] {
+        return try await apiCall(method, params: params)
+    }
+
     // MARK: - HTTP Helpers
 
-    private func apiCall(_ method: String, params: [String: Any]) async throws -> [String: Any] {
+    private func apiCall(_ method: String, params: [String: Any], tokenPreference: TokenType = .preferBot) async throws -> [String: Any] {
+        guard let token = selectToken(for: method, preference: tokenPreference) else {
+            throw SlackError.missingToken
+        }
+
         let url = baseURL.appendingPathComponent(method)
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
